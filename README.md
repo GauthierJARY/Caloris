@@ -47,5 +47,5 @@ Only put one connection link, it handles the symmetry correctly, even for radiat
 Clone the repository and add it to your Python path:
 
 ```bash
-git clone https://github.com/yourusername/ThermalNetwork.git
-cd ThermalNetwork
+git clone https://github.com/yourusername/Caloris.git
+cd Caloris
