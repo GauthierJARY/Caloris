@@ -1,6 +1,7 @@
 # Caloris or the FDM-thermal-solver
 
 **Caloris** is a Python package for **lumped thermal network modeling**, supporting both **steady-state** and **transient simulations** of nodes connected by conduction, contact, or radiative links. It allows for **custom boundary conditions** (thermostats, cryostats, heaters), **temperature-dependent materials**, and flexible network configurations.  
+It aims at quick estimations and grasp physics within preliminary thermal design of projects. More will be done to make it more intuitive. 
 
 - you can compare the examples with : https://ntrs.nasa.gov/api/citations/20200006182/downloads/Introduction%20to%20Numerical%20Methods%20in%20Heat%20Transfer.pdf where we find the same results as the 2 developped examples for transient conduction. 
 ## How implement your model correctly ? 
