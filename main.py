@@ -5,12 +5,10 @@ Created on Sun Oct 12 18:47:50 2025
 @author: G.J.
 """
 import numpy as np
-from ThermalNetwork.network import Network
-from ThermalNetwork.nodes import Node, Thermostat
-from ThermalNetwork.connections import Connection
-import numpy as np
+from Caloris.network import Network
+from Caloris.nodes import Node, Thermostat
+from Caloris.connections import Connection
 import matplotlib.pyplot as plt
-import numpy as np
 
 
 # --- Paramètres du problème ---
