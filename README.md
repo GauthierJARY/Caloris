@@ -7,6 +7,9 @@ It aims at quick estimations and grasp physics within preliminary thermal design
 ## How implement your model correctly ? 
 Only put one connection link, it handles the symmetry correctly, even for radiation. Be careful with view factor for radiation. 
 
+## Tutorial
+Fill the excel sheet and respect format.
+
 ---
 
 ## Features
