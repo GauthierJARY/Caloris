@@ -14,11 +14,11 @@ Example 2 is the heat equilibrium between 2 radiating plates, ecranting shield.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from ThermalNetwork.nodes import Node, Thermostat, Heater
-from ThermalNetwork.connections import Connection
-from ThermalNetwork.network import Network
+from Caloris.nodes import Node, Thermostat, Heater
+from Caloris.connections import Connection
+from Caloris.network import Network
 from scipy.optimize import fsolve
-from ThermalNetwork.materials import lambda_material_dispatch
+from Caloris.materials import lambda_material_dispatch
 
 # =============================================
 # Example 1: Heat transfer across a copper tube
@@ -100,9 +100,9 @@ print(f"Solution numérique à x={length:.2f} m: {T[-1]:.2f} K")
 # =============================================
 
 import numpy as np
-from ThermalNetwork.nodes import Thermostat, Node, Cryostat, Heater
-from ThermalNetwork.connections import Connection
-from ThermalNetwork.network import Network
+from Caloris.nodes import Thermostat, Node, Cryostat, Heater
+from Caloris.connections import Connection
+from Caloris.network import Network
 
 
 # --- Define example behaviour functions ---
@@ -153,9 +153,9 @@ Transient thermal network: 7-node aluminum rod
 
 import numpy as np
 import matplotlib.pyplot as plt
-from ThermalNetwork.nodes import Node, Thermostat, Heater
-from ThermalNetwork.network import Network
-from ThermalNetwork.connections import Connection
+from Caloris.nodes import Node, Thermostat, Heater
+from Caloris.network import Network
+from Caloris.connections import Connection
 
 # -----------------------------
 # Material and geometry
@@ -421,3 +421,23 @@ print(f"{int(T[0])}K -> {int(fluxes34[(nodes[0].label,nodes[1].label)])}W -> {in
 # print('Cas3.6')
 # print(f"From {int(T[0])}K heatflux {int(fluxes36[(nodes[0].label,nodes[1].label)])}W towards {int(T[1])}K")
 # print(f"From {int(T[2])}K heatflux {int(fluxes36[(nodes[1].label,nodes[2].label)])}W towards {int(T[3])}K")
+
+
+# Example 4 : Steady conduction in a large plate
+# from : https://drive.uqu.edu.sa/_/kmguedri/files/A-HT-1-Chap5.pdf
+nodes = [
+    Thermostat(label='0', fixed_temperature = 0+273),
+    Heater(label='1', behaviour_func=5e6*10*4e-2), # simplification, lumped internal generation of energy
+    Node(label='2'),
+    Thermostat(label='inf', fixed_temperature=30+273),
+    ]
+
+connections = [
+    Connection(nodes[0], nodes[1], type_='conduction',L=2e-2, A=10, material='Uranium'),
+    Connection(nodes[1], nodes[2], type_='conduction',L=2e-2, A=10, material='Uranium'),
+    Connection(nodes[2], nodes[3], type_='contact', h_c=45, A=10) # air convection
+    ]
+net = Network(nodes, connections)
+T, fluxes36, convergence_history = net.solve_steady(verbose=True)
+T2 = T[2] - 273
+print(f'Temperature on the external boundary with air is {T2} °C, to compare to analytical 136.0°C')
