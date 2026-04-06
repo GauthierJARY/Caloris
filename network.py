@@ -11,10 +11,9 @@ Faithfully reproduces old procedural solver logic.
 """
 
 import numpy as np
-from ThermalNetwork.nodes import Thermostat, Node, Cryostat, Heater
-from ThermalNetwork.materials import cp_material_dispatch
+from Caloris.nodes import Thermostat, Node, Cryostat, Heater
+from Caloris.materials import cp_material_dispatch
 from scipy.optimize import root
-import numpy as np
 from scipy.integrate import solve_ivp
 
 class Network:
