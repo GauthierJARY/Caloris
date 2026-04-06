@@ -64,6 +64,8 @@ def lambda_material_dispatch(T, material):
         A_T = sum(coeff * ln_term**(i+1) for i, coeff in enumerate(coefficients))
         A_T = np.maximum(A_T, 0.0108)
         return A_T
+    elif material == 'Uranium':
+        return 28
     else:
         print(f'Warning: No lambda found for {material}, default values used !')
         return 5000
