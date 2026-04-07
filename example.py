@@ -55,8 +55,9 @@ for i in range(n_points):
 network = Network(nodes, connections)
 
 # Résolution
-T, fluxes, _ = network.solve_steady()
-
+res = network.solve_steady()
+T = res["T"]
+fluxes = res["fluxes"]
 # Solution analytique
 x_analytical = np.linspace(0, length, 100)
 T_analytical = T_i + (Q_total * x_analytical) / (k_cu * area)
@@ -302,7 +303,7 @@ plt.grid(True)
 plt.show()
 
 # T vs X at selected times
-time_slices2 = [0, 10, 40, 50, 100, t_span[1]]
+time_slices2 = [0, 5, 10, 20, 150, t_span[1]]
 plt.figure(figsize=(8,5))
 for t_slice in time_slices2:
     idx = np.argmin(np.abs(sol2.t - t_slice))
@@ -328,27 +329,43 @@ connections = [
     Connection(nodes[0], nodes[1], type_='radiation', e_i=0.8, e_j=0.8, S_i=1, S_j=1, F_ij=1)
     ]
 net = Network(nodes, connections)
-T, fluxes31, convergence_history = net.solve_steady(verbose=False)
+res = net.solve_steady(verbose=False)
+T = res["T"]
+fluxes31 = res["fluxes"]
+convergence_history = res["convergence"]
 print('Cas3.1')
 print(f"{int(T[0])}K -> {int(fluxes31[(nodes[0].label,nodes[1].label)])}W -> {int(T[1])}K")
 
 #☺ Sub-Example 3.2 still two plates facing each others, but a new plate in between, floating shield principle
+# Nodes and connections
 nodes = [
     Thermostat(label='VG1', fixed_temperature=300),
     Node(label='VG2'),
     Thermostat(label='space', fixed_temperature=50)
-    ]
+]
 connections = [
     Connection(nodes[0], nodes[1], type_='radiation', e_i=0.8, e_j=0.8, S_i=1, S_j=1, F_ij=1),
     Connection(nodes[1], nodes[2], type_='radiation', e_i=0.8, e_j=0.8, S_i=1, S_j=1, F_ij=1)
-    ]
-net = Network(nodes, connections)
-G32,F = net.build_G()
-T, fluxes32, convergence_history = net.solve_steady(verbose=False)
-print('Cas3.2')
-# print(G32)
-print(f"{int(T[0])}K -> {int(fluxes32[(nodes[0].label,nodes[1].label)])}W -> {int(T[1])}K -> {int(fluxes32[(nodes[1].label,nodes[2].label)])}W -> {int(T[2])}K")
+]
 
+# Build network
+net = Network(nodes, connections)
+
+# Current temperatures
+T_nodes = np.array([node.temperature for node in nodes])
+
+# Build G and compute fluxes
+G32 = net.build_G(T_nodes)
+fluxes32 = net.compute_fluxes(T_nodes, G32)
+
+# Solve steady-state
+res = net.solve_steady(verbose=False)
+T = res["T"]
+
+# Print results
+print('Cas3.2')
+print(f"{int(T[0])}K -> {int(fluxes32[(nodes[0].label,nodes[1].label)])}W -> "
+      f"{int(T[1])}K -> {int(fluxes32[(nodes[1].label,nodes[2].label)])}W -> {int(T[2])}K")
 
 # #☺ Sub-Example 3.3, should be the same as 3.2
 # nodes = [
@@ -380,7 +397,10 @@ connections = [
     Connection(nodes[1], nodes[2], type_='radiation', e_i=0.8, e_j=0.8, S_i=1, S_j=1, F_ij=1)
     ]
 net = Network(nodes, connections)
-T, fluxes34, convergence_history = net.solve_steady(verbose=False)
+res = net.solve_steady(verbose=False)
+T = res["T"]
+fluxes34 = res["fluxes"]
+convergence_history = res["convergence"]
 print('Cas3.4')
 print(f"{int(T[0])}K -> {int(fluxes34[(nodes[0].label,nodes[1].label)])}W -> {int(T[1])}K -> {int(fluxes34[(nodes[1].label,nodes[2].label)])}W -> {int(T[2])}K")
 
@@ -438,6 +458,9 @@ connections = [
     Connection(nodes[2], nodes[3], type_='contact', h_c=45, A=10) # air convection
     ]
 net = Network(nodes, connections)
-T, fluxes36, convergence_history = net.solve_steady(verbose=True)
+res = net.solve_steady(verbose=False)
+T = res["T"]
+fluxes4 = res["fluxes"]
+convergence_history = res["convergence"]
 T2 = T[2] - 273
 print(f'Temperature on the external boundary with air is {T2} °C, to compare to analytical 136.0°C')
