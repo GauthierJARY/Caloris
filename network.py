@@ -44,33 +44,45 @@ class Network:
         self.nodes[self.node_to_idx[label]].temperature = temperature
 
     # -------------------------------------------------------------------------
-    def build_G(self):
-            """Build conductance matrix G and compute fluxes based on node temperatures."""
-            N = self.N
-            G = np.zeros((N, N))
-            fluxes = {}  # dictionary { ('label', 'label') : float values of flux, ... }
+    def build_G(self, T):
+        """Build conductance matrix G(T) without mutating nodes."""
+        N = self.N
+        G = np.zeros((N, N))
     
-            for conn in self.connections:
-                i = self.node_to_idx[conn.node_i.label]
-                j = self.node_to_idx[conn.node_j.label]
-                T_i = self._get_node_temperature(conn.node_i.label)
-                T_j = self._get_node_temperature(conn.node_j.label)
-                G_ij = conn.compute_G(T_i, T_j, spread=self.spread)
+        for conn in self.connections:
+            i = self.node_to_idx[conn.node_i.label]
+            j = self.node_to_idx[conn.node_j.label]
     
-                # Fill symmetric G matrix
-                G[i, i] += G_ij
-                G[j, j] += G_ij
-                G[i, j] -= G_ij
-                G[j, i] -= G_ij
+            T_i = T[i]
+            T_j = T[j]
     
-                # Compute flux direction
-                flux = G_ij * (T_i - T_j)
-                if flux >= 0:
-                    fluxes[(conn.node_i.label, conn.node_j.label)] = flux
-                else:
-                    fluxes[(conn.node_j.label, conn.node_i.label)] = -flux
+            G_ij = conn.compute_G(T_i, T_j, spread=self.spread)
     
-            return G, fluxes
+            G[i, i] += G_ij
+            G[j, j] += G_ij
+            G[i, j] -= G_ij
+            G[j, i] -= G_ij
+    
+        return G
+    
+    # -------------------------------------------------------------------------
+    def compute_fluxes(self, T, G):
+        """Compute fluxes from G and T."""
+        fluxes = {}
+    
+        for conn in self.connections:
+            i = self.node_to_idx[conn.node_i.label]
+            j = self.node_to_idx[conn.node_j.label]
+    
+            G_ij = -G[i, j]  # off-diagonal = -G_ij
+            flux = G_ij * (T[i] - T[j])
+    
+            if flux >= 0:
+                fluxes[(conn.node_i.label, conn.node_j.label)] = flux
+            else:
+                fluxes[(conn.node_j.label, conn.node_i.label)] = -flux
+    
+        return fluxes
 
     # -------------------------------------------------------------------------
     def apply_special_boundary_conditions(self, G, S, fluxes, C=None):
@@ -115,48 +127,60 @@ class Network:
 
     # -------------------------------------------------------------------------
     def solve_steady(self, tol=1e-5, max_iter=100, verbose=True):
-        """Iteratively solve for steady-state temperatures."""
-        T = np.array([node.temperature for node in self.nodes])
-        Q = np.array([node.heat_input for node in self.nodes])
-        convergence_history = []
-
-        for it in range(max_iter):
-            # Update node temperatures from T array before building G
-            for i, node in enumerate(self.nodes):
-                node.temperature = T[i]
-            
-            G, fluxes = self.build_G()
-            S = Q.copy()
-
-            # Apply thermostat / cryostat / heater conditions
-            G, S = self.apply_special_boundary_conditions(G, S, fluxes)
-
-            # Solve linear system
-            try:
-                T_new = np.linalg.solve(G, S)
-            except np.linalg.LinAlgError:
-                raise ValueError("❌ Singular G matrix: check boundary conditions or isolated nodes")
-
-            # Enforce positive temperatures
-            T_new = np.maximum(T_new, 0.0)
-            
-            # Check convergence
-            err = np.max(np.abs(T_new - T))
-            convergence_history.append(err)
-            
-            if verbose:
-                pass
-                # print(f"Iter {it:03d} | max ΔT = {err:.3e}")
-            # Only perform under-relaxation if we haven't converged yet
-            if err >= tol:
-                # Under-relaxation
-                T = 0.5 * T + 0.5 * T_new
-            else:
-                if verbose:
-                    print(f"✅ Converged in {it+1} iterations.")
-                break
-
-        return T, fluxes, convergence_history
+       """Stateless steady-state solver."""
+       
+       T = np.array([node.temperature for node in self.nodes])
+       Q = np.array([node.heat_input for node in self.nodes])
+       
+       convergence_history = []
+       
+       for it in range(max_iter):
+       
+           # Build system
+           G = self.build_G(T)
+           fluxes = self.compute_fluxes(T, G)
+       
+           S = Q.copy()
+           G_bc, S_bc = self.apply_special_boundary_conditions(G.copy(), S.copy(), fluxes)
+       
+           # Solve linear system
+           try:
+               T_new = np.linalg.solve(G_bc, S_bc)
+           except np.linalg.LinAlgError:
+               raise ValueError("❌ Singular G matrix")
+       
+           # Physical constraint
+           T_new = np.maximum(T_new, 0.0)
+       
+           # Convergence
+           err = np.max(np.abs(T_new - T))
+           convergence_history.append(err)
+       
+           if err < tol:
+               if verbose:
+                   print(f"✅ Converged in {it+1} iterations.")
+               break
+       
+           # Under-relaxation
+           T = 0.5 * T + 0.5 * T_new
+       
+       # Final recompute (IMPORTANT)
+       G = self.build_G(T)
+       fluxes = self.compute_fluxes(T, G)
+       
+       # Store internally (fix #5)
+       self._last_G = G
+       self._last_fluxes = fluxes
+       self._last_T = T
+       
+       # Return structured result (fix #2)
+       return {
+           "T": T,
+           "fluxes": fluxes,
+           "G": G,
+           "convergence": convergence_history
+       }
+   
     # -------------------------------------------------------------------------
     def solve_steady_scipy(self, tol=1e-5, max_iter=150, method='hybr', verbose=True):
         """
@@ -174,7 +198,7 @@ class Network:
                 node.temperature = T[i]
 
             # Build conductance and flux dictionary
-            G, fluxes = self.build_G()
+            G, fluxes = self.build_G(T)
             S = np.array([node.heat_input for node in self.nodes])
 
             # Apply special boundary conditions (Dirichlet, etc.)
@@ -197,7 +221,7 @@ class Network:
             node.temperature = T_final[i]
 
         # Recompute final fluxes
-        _, fluxes = self.build_G()
+        _, fluxes = self.build_G(T)
 
         if verbose:
             print(f"✅ Steady-state converged: {sol.message}")
@@ -230,8 +254,7 @@ class Network:
         - T_hist: list of temperature arrays at each time step
         - time_points: list of time points
         """
-        import numpy as np
-    
+        
         n_steps = int(t_max / dt)
         T = np.array([node.temperature for node in self.nodes]) if T_init is None else T_init.copy()
         Q = np.array([node.heat_input for node in self.nodes])
@@ -248,15 +271,19 @@ class Network:
                 for i, node in enumerate(self.nodes):
                     node.temperature = T[i]
     
-                G, fluxes = self.build_G()  # G is G(T)
-                C = self.build_C()     # C is C(T) – you need to implement this if not present
+                G = self.build_G(T)
+                fluxes = self.compute_fluxes(T, G)
+                C = self.build_C()
                 S = Q.copy()
     
                 # Build system: (C/dt + G) T_new = C*T/dt + S
-                A = C / dt + G
-                b = C @ (T / dt) + S
                 # Apply special BCs (thermostats, cryostats, heaters, etc.) to A b and no longer to G S 
-                A, b = self.apply_special_boundary_conditions(A, b, fluxes)
+                # Apply BCs correctly
+                G_bc, S_bc, C_bc = self.apply_special_boundary_conditions(G.copy(), S.copy(), fluxes, C=C)
+                
+                # Build system: (C/dt + G) T_new = C*T/dt + S
+                A = C_bc / dt + G_bc
+                b = C_bc @ (T / dt) + S_bc
                 try:
                     T_new = np.linalg.solve(A, b)
                 except np.linalg.LinAlgError:
@@ -295,7 +322,8 @@ class Network:
             node.temperature = T[i]
     
         # Build matrices
-        G, fluxes = self.build_G()
+        G = self.build_G(T)
+        fluxes = self.compute_fluxes(T, G)  # compute fluxes separately
         C = self.build_C()
         S = np.array([node.heat_input for node in self.nodes])
     
