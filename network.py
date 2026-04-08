@@ -236,7 +236,7 @@ class Network:
         Build diagonal matrix C of thermal capacitances for each node.
         Care when manipulating c_p or C_p and addition of the mass or volumic mass rho !
         """
-        C_diag = np.array([node.mass * cp_material_dispatch(node.temperature, node.material) for node in self.nodes])
+        C_diag = np.array([node.mass * cp_material_dispatch(node.temperature, node.material_specific_heat) for node in self.nodes])
         return np.diag(C_diag) # should add the spreading for uncertainty
 
     # -------------------------------------------------------------------------
