@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 from Caloris.nodes import Node, Thermostat, Heater
 from Caloris.connections import Connection
 from Caloris.network import Network
-from scipy.optimize import fsolve
+# from scipy.optimize import fsolve
 from Caloris.materials import lambda_material_dispatch
 
 # =============================================
@@ -49,14 +49,15 @@ connections = []
 for i in range(n_points):
     dx = length / n_points
     connections.append(Connection(nodes[i], nodes[i+1], 'conduction',
-                                L=dx, A=area, material=material))
+                                L=dx, A=area, material_conductivity=material))
 
 # Création du réseau
 network = Network(nodes, connections)
 
 # Résolution
-T, fluxes, _ = network.solve_steady()
-
+res = network.solve_steady()
+T = res["T"]
+fluxes = res["fluxes"]
 # Solution analytique
 x_analytical = np.linspace(0, length, 100)
 T_analytical = T_i + (Q_total * x_analytical) / (k_cu * area)
@@ -100,7 +101,7 @@ print(f"Solution numérique à x={length:.2f} m: {T[-1]:.2f} K")
 # =============================================
 
 import numpy as np
-from Caloris.nodes import Thermostat, Node, Cryostat, Heater
+from Caloris.nodes import Thermostat, Node, Heater
 from Caloris.connections import Connection
 from Caloris.network import Network
 
@@ -114,15 +115,15 @@ def cryostat_behaviour(T, Q_in):
     return -Q_in  # simple passive sink
 
 # --- Define nodes ---
-node1 = Thermostat(label='T1', fixed_temperature=4.0, material='Al6061') 
-node2 = Heater(label='H1', material='Al6061', behaviour_func=heater_behaviour)
-node3 = Node(label='C1', material='Al6061')
+node1 = Thermostat(label='T1', fixed_temperature=4.0, material_specific_heat='Al6061') 
+node2 = Heater(label='H1', material_specific_heat='Al6061', behaviour_func=heater_behaviour)
+node3 = Node(label='C1', material_specific_heat='Al6061')
 
 nodes = [node1, node2, node3]
 
 # --- Define connections (unit length & area assumed) ---
-conn1 = Connection(node_i=node1, node_j=node2, type_='conduction', A=0.01, L=1, material = 'Al6061')
-conn2 = Connection(node_i=node2, node_j=node3, type_='conduction', A=0.01, L=1, material = 'Al6061')
+conn1 = Connection(node_i=node1, node_j=node2, type_='conduction', A=0.01, L=1, material_conductivity = 'Al6061')
+conn2 = Connection(node_i=node2, node_j=node3, type_='conduction', A=0.01, L=1, material_conductivity = 'Al6061')
 
 connections = [conn1, conn2]
 
@@ -186,11 +187,11 @@ T1 = 273.15+200  # Step temperature at boundaries [K]
 nodes1 = []
 for i in range(N_nodes):
     if i == 0:
-        nodes1.append(Thermostat(label=node_labels[i], temperature=T1, fixed_temperature=T1, material='Al6061'))
+        nodes1.append(Thermostat(label=node_labels[i], temperature=T1, fixed_temperature=T1, material_specific_heat='Al6061'))
     elif i == N_nodes - 1:
-        nodes1.append(Thermostat(label=node_labels[i], temperature=T1, fixed_temperature=T1, material='Al6061'))
+        nodes1.append(Thermostat(label=node_labels[i], temperature=T1, fixed_temperature=T1, material_specific_heat='Al6061'))
     else:
-        nodes1.append(Node(label=node_labels[i], temperature=T0, material='Al6061'))
+        nodes1.append(Node(label=node_labels[i], temperature=T0, material_specific_heat='Al6061'))
 
 # Assign node masses
 for i in range(N_nodes):
@@ -210,7 +211,7 @@ for i in range(N_nodes - 1):
         type_='conduction',
         L=L_links[i],
         A=A,
-        material='Al6061'
+        material_conductivity='Al6061'
     ))
 
 # Network
@@ -252,13 +253,13 @@ plt.show()
 nodes2 = []
 for i in range(N_nodes):
     if i == 0:
-        nodes2.append(Thermostat(label=node_labels[i], temperature=293.15, fixed_temperature=293.15, material='Al6061'))
+        nodes2.append(Thermostat(label=node_labels[i], temperature=293.15, fixed_temperature=293.15, material_specific_heat='Al6061'))
     elif i == N_nodes - 1:
-        nodes2.append(Thermostat(label=node_labels[i], temperature=293.15, fixed_temperature=293.15, material='Al6061'))
+        nodes2.append(Thermostat(label=node_labels[i], temperature=293.15, fixed_temperature=293.15, material_specific_heat='Al6061'))
     elif i == N_nodes // 2:
-        nodes2.append(Heater(label=node_labels[i], temperature=293.15, behaviour_func=100.0, material='Al6061'))
+        nodes2.append(Heater(label=node_labels[i], temperature=293.15, behaviour_func=100.0, material_specific_heat='Al6061'))
     else:
-        nodes2.append(Node(label=node_labels[i], temperature=293.15, material='Al6061'))
+        nodes2.append(Node(label=node_labels[i], temperature=293.15, material_specific_heat='Al6061'))
 
 # Assign node masses
 for i in range(N_nodes):
@@ -278,7 +279,7 @@ for i in range(N_nodes - 1):
         type_='conduction',
         L=L_links[i],
         A=A,
-        material='Al6061'
+        material_conductivity='Al6061'
     ))
 
 # Network
@@ -302,7 +303,7 @@ plt.grid(True)
 plt.show()
 
 # T vs X at selected times
-time_slices2 = [0, 10, 40, 50, 100, t_span[1]]
+time_slices2 = [0, 5, 10, 20, 150, t_span[1]]
 plt.figure(figsize=(8,5))
 for t_slice in time_slices2:
     idx = np.argmin(np.abs(sol2.t - t_slice))
@@ -328,27 +329,43 @@ connections = [
     Connection(nodes[0], nodes[1], type_='radiation', e_i=0.8, e_j=0.8, S_i=1, S_j=1, F_ij=1)
     ]
 net = Network(nodes, connections)
-T, fluxes31, convergence_history = net.solve_steady(verbose=False)
+res = net.solve_steady(verbose=False)
+T = res["T"]
+fluxes31 = res["fluxes"]
+convergence_history = res["convergence"]
 print('Cas3.1')
 print(f"{int(T[0])}K -> {int(fluxes31[(nodes[0].label,nodes[1].label)])}W -> {int(T[1])}K")
 
 #☺ Sub-Example 3.2 still two plates facing each others, but a new plate in between, floating shield principle
+# Nodes and connections
 nodes = [
     Thermostat(label='VG1', fixed_temperature=300),
     Node(label='VG2'),
     Thermostat(label='space', fixed_temperature=50)
-    ]
+]
 connections = [
     Connection(nodes[0], nodes[1], type_='radiation', e_i=0.8, e_j=0.8, S_i=1, S_j=1, F_ij=1),
     Connection(nodes[1], nodes[2], type_='radiation', e_i=0.8, e_j=0.8, S_i=1, S_j=1, F_ij=1)
-    ]
-net = Network(nodes, connections)
-G32,F = net.build_G()
-T, fluxes32, convergence_history = net.solve_steady(verbose=False)
-print('Cas3.2')
-# print(G32)
-print(f"{int(T[0])}K -> {int(fluxes32[(nodes[0].label,nodes[1].label)])}W -> {int(T[1])}K -> {int(fluxes32[(nodes[1].label,nodes[2].label)])}W -> {int(T[2])}K")
+]
 
+# Build network
+net = Network(nodes, connections)
+
+# Current temperatures
+T_nodes = np.array([node.temperature for node in nodes])
+
+# Build G and compute fluxes
+G32 = net.build_G(T_nodes)
+fluxes32 = net.compute_fluxes(T_nodes, G32)
+
+# Solve steady-state
+res = net.solve_steady(verbose=False)
+T = res["T"]
+
+# Print results
+print('Cas3.2')
+print(f"{int(T[0])}K -> {int(fluxes32[(nodes[0].label,nodes[1].label)])}W -> "
+      f"{int(T[1])}K -> {int(fluxes32[(nodes[1].label,nodes[2].label)])}W -> {int(T[2])}K")
 
 # #☺ Sub-Example 3.3, should be the same as 3.2
 # nodes = [
@@ -380,7 +397,10 @@ connections = [
     Connection(nodes[1], nodes[2], type_='radiation', e_i=0.8, e_j=0.8, S_i=1, S_j=1, F_ij=1)
     ]
 net = Network(nodes, connections)
-T, fluxes34, convergence_history = net.solve_steady(verbose=False)
+res = net.solve_steady(verbose=False)
+T = res["T"]
+fluxes34 = res["fluxes"]
+convergence_history = res["convergence"]
 print('Cas3.4')
 print(f"{int(T[0])}K -> {int(fluxes34[(nodes[0].label,nodes[1].label)])}W -> {int(T[1])}K -> {int(fluxes34[(nodes[1].label,nodes[2].label)])}W -> {int(T[2])}K")
 
@@ -433,11 +453,14 @@ nodes = [
     ]
 
 connections = [
-    Connection(nodes[0], nodes[1], type_='conduction',L=2e-2, A=10, material='Uranium'),
-    Connection(nodes[1], nodes[2], type_='conduction',L=2e-2, A=10, material='Uranium'),
-    Connection(nodes[2], nodes[3], type_='contact', h_c=45, A=10) # air convection
+    Connection(nodes[0], nodes[1], type_='conduction',L=2e-2, A=10, material_conductivity=28),
+    Connection(nodes[1], nodes[2], type_='conduction',L=2e-2, A=10, material_conductivity='Uranium'),
+    Connection(nodes[2], nodes[3], type_='convection', h_c=45, A=10) # air convection
     ]
 net = Network(nodes, connections)
-T, fluxes36, convergence_history = net.solve_steady(verbose=True)
+res = net.solve_steady(verbose=False)
+T = res["T"]
+fluxes4 = res["fluxes"]
+convergence_history = res["convergence"]
 T2 = T[2] - 273
 print(f'Temperature on the external boundary with air is {T2} °C, to compare to analytical 136.0°C')

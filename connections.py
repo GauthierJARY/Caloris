@@ -3,9 +3,9 @@
 Created on Sun Oct 12 18:47:50 2025
 
 @author: G.J. 
-
-Connection class for thermal network.
-Handles different types of thermal links: conduction, contact, radiation, direct_G.
+This document is part of the Caloris package.
+This script supports the creation of a class & object for the thermal network.
+Connection class for thermal network. Handles different types of thermal links: conduction, contact, radiation, direct_G.
 """
 
 import numpy as np
@@ -19,8 +19,8 @@ class Connection:
     def __init__(self, node_i, node_j, type_, **kwargs):
         self.node_i = node_i
         self.node_j = node_j
-        self.type = type_  # 'conduction', 'contact', 'radiation', 'direct_G'
-        self.params = kwargs  # stores L, A, material, h_c, epsilon, F_ij, G_function_name, etc.
+        self.type = type_  # 'conduction', 'convection', 'radiation', 'conductance'
+        self.params = kwargs  # stores L, A, material_conductivity, h_c, epsilon, F_ij, G_function_name, etc.
         # Nota Bene: kwargs parameters are handled under dictionnary, so can be inputed and accessed likeso. 
         # kwargs is standard name but any string with ** is working: **duck would work 
         
@@ -32,22 +32,51 @@ class Connection:
 # default spread is 1, but it can be adjusted to perform uncertainty and sensibility analysis in a next step of an analysis
     def compute_G(self, T_i, T_j, spread=1.0):
         """Compute conductance between nodes i and j given temperatures."""
+        # if self.type == 'conduction':
+        #     L = self.params['L'] # unit m
+        #     A = self.params['A'] # unit m²
+        #     material_conductivity = self.params['material_conductivity']
+        #     T_avg = 0.5 * (abs(T_i) + abs(T_j))
+        #     lambda_avg = lambda_material_dispatch(T_avg, material_conductivity) * spread # unit W/m/K
+        #     if lambda_avg <= 0:
+        #         print(f"❌ Zero or negative conductivity for {material_conductivity} at T_avg={T_avg}")
+        #     G_ij = lambda_avg * A / L # unit W/K
+        
         if self.type == 'conduction':
-            L = self.params['L'] # unit m
-            A = self.params['A'] # unit m²
-            material = self.params['material']
+            L = self.params['L']  # m
+            A = self.params['A']  # m²
+            material_conductivity = self.params['material_conductivity']
             T_avg = 0.5 * (abs(T_i) + abs(T_j))
-            lambda_avg = lambda_material_dispatch(T_avg, material) * spread # unit W/m/K
+            # --- Handle string or float ---
+            if isinstance(material_conductivity, (int, float)):
+                # Constant conductivity
+                lambda_avg = float(material_conductivity) * spread
+            elif isinstance(material_conductivity, str):
+                # Material lookup
+                lambda_avg = (
+                    lambda_material_dispatch(T_avg, material_conductivity)
+                    * spread
+                )
+            else:
+                raise TypeError(
+                    f"material_conductivity must be float or str, "
+                    f"got {type(material_conductivity)}"
+                )
+            # --- Safety check ---
             if lambda_avg <= 0:
-                print(f"❌ Zero or negative conductivity for {material} at T_avg={T_avg}")
-            G_ij = lambda_avg * A / L # unit W/K
+                print(
+                    f"❌ Zero or negative conductivity for "
+                    f"{material_conductivity} at T_avg={T_avg}"
+                )
+            G_ij = lambda_avg * A / L  # W/K
+            return G_ij
 
-        elif self.type == 'contact':
+        elif self.type == 'convection':
             A = self.params['A'] # unit m²
             h_c = self.params['h_c'] # unit W/m²/K
             G_ij = A * h_c # unit W/K
 
-        elif self.type == 'direct_G':
+        elif self.type == 'conductance':
             G_function_name = self.params['G_function_name']
             T_avg = 0.5 * (abs(T_i) + abs(T_j))
             spread_direct = 1 if spread >= 1 else 0.5

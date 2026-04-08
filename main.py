@@ -8,7 +8,6 @@ import numpy as np
 from Caloris.network import Network
 from Caloris.nodes import Node, Thermostat
 from Caloris.connections import Connection
-import matplotlib.pyplot as plt
 
 
 # --- Paramètres du problème ---
@@ -32,7 +31,7 @@ nodes[0].heat_input = Q  # flux appliqué à gauche
 
 # --- Connexions entre nœuds consécutifs ---
 dx = L / (N-1)
-connections = [Connection(nodes[i], nodes[i+1], 'conduction', L=dx, A=A, material='Cu') for i in range(N-1)]
+connections = [Connection(nodes[i], nodes[i+1], 'conduction', L=dx, A=A, material_conductivity='Cu') for i in range(N-1)]
 
 # --- Création du réseau ---
 network = Network(nodes, connections)
