@@ -82,7 +82,7 @@ def load_connections(file, nodes):
         L = _to_float(row["L"])
         A = _to_float(row["A"])
         h_c = _to_float(row["h_c"])
-        material = row["material"]
+        material_conductivity = row["material_conductivity"]
         e_i = _to_float(row["e_i"])
         e_j = _to_float(row["e_j"])
         S_i = _to_float(row["S_i"])
@@ -112,9 +112,18 @@ def load_connections(file, nodes):
         if F_ij is not None:
             kwargs["F_ij"] = F_ij
             
-        if not pd.isna(material):
-            kwargs["material"] = str(material)
-
+        # if not pd.isna(material_conductivity):
+        #     kwargs["material_conductivity"] = str(material_conductivity)
+        if not pd.isna(material_conductivity):
+            if isinstance(material_conductivity, (int, float)):
+                kwargs["material_conductivity"] = float(material_conductivity)
+            else:
+                # Could still be a numeric string like "14.2"
+                try:
+                    kwargs["material_conductivity"] = float(material_conductivity)
+                except (ValueError, TypeError):
+                    kwargs["material_conductivity"] = str(material_conductivity).strip()
+            
         connection = Connection(
             nodes[i],
             nodes[j],
@@ -214,13 +223,5 @@ if __name__ == "__main__":
     # net._last_G,
     # {"converged": True, "iterations": len(res["convergence"])}
     # )
-    
-    net = load_network("Caloris3.xlsx")
-    res = net.solve_steady(verbose=False)
-    T = res["T"]
-    fluxes = res["fluxes"]
-    convergence_history = res["convergence"]
+    print((T-273))
 
-    
-    print("Temperatures:")
-    print(T)
