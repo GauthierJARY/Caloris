@@ -6,7 +6,7 @@ Created on Sun Oct 12 18:47:50 2025
 """
 
 import numpy as np
-from scipy.interpolate import interp1d
+# from scipy.interpolate import interp1d
 # import networkx as nx
 import matplotlib.pyplot as plt
 
@@ -47,7 +47,6 @@ def lambda_CFRP_warp(T):
         return 10**poly
     # --- Fonction lambda Cu RRR=50 ---
 def lambda_Cu_RRR50(T):
-        logT = np.log10(T)
         a,b,c,d,e,f,g,h,i = 1.8743,-0.41538,-0.6018,0.13294, 0.26426, -0.0219, -0.051276, 0.0014871, 0.003723
         poly = (a + c*T**0.5 + e*T + g*T**1.5 + i*T**2)/(1 + b*T**0.5 + d*T + f*T**1.5 + h*T**2)
         return 10**poly
