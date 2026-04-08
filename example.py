@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 from Caloris.nodes import Node, Thermostat, Heater
 from Caloris.connections import Connection
 from Caloris.network import Network
-from scipy.optimize import fsolve
+# from scipy.optimize import fsolve
 from Caloris.materials import lambda_material_dispatch
 
 # =============================================
@@ -49,7 +49,7 @@ connections = []
 for i in range(n_points):
     dx = length / n_points
     connections.append(Connection(nodes[i], nodes[i+1], 'conduction',
-                                L=dx, A=area, material=material))
+                                L=dx, A=area, material_conductivity=material))
 
 # Création du réseau
 network = Network(nodes, connections)
@@ -101,7 +101,7 @@ print(f"Solution numérique à x={length:.2f} m: {T[-1]:.2f} K")
 # =============================================
 
 import numpy as np
-from Caloris.nodes import Thermostat, Node, Cryostat, Heater
+from Caloris.nodes import Thermostat, Node, Heater
 from Caloris.connections import Connection
 from Caloris.network import Network
 
@@ -115,15 +115,15 @@ def cryostat_behaviour(T, Q_in):
     return -Q_in  # simple passive sink
 
 # --- Define nodes ---
-node1 = Thermostat(label='T1', fixed_temperature=4.0, material='Al6061') 
-node2 = Heater(label='H1', material='Al6061', behaviour_func=heater_behaviour)
-node3 = Node(label='C1', material='Al6061')
+node1 = Thermostat(label='T1', fixed_temperature=4.0, material_specific_heat='Al6061') 
+node2 = Heater(label='H1', material_specific_heat='Al6061', behaviour_func=heater_behaviour)
+node3 = Node(label='C1', material_specific_heat='Al6061')
 
 nodes = [node1, node2, node3]
 
 # --- Define connections (unit length & area assumed) ---
-conn1 = Connection(node_i=node1, node_j=node2, type_='conduction', A=0.01, L=1, material = 'Al6061')
-conn2 = Connection(node_i=node2, node_j=node3, type_='conduction', A=0.01, L=1, material = 'Al6061')
+conn1 = Connection(node_i=node1, node_j=node2, type_='conduction', A=0.01, L=1, material_conductivity = 'Al6061')
+conn2 = Connection(node_i=node2, node_j=node3, type_='conduction', A=0.01, L=1, material_conductivity = 'Al6061')
 
 connections = [conn1, conn2]
 
@@ -187,11 +187,11 @@ T1 = 273.15+200  # Step temperature at boundaries [K]
 nodes1 = []
 for i in range(N_nodes):
     if i == 0:
-        nodes1.append(Thermostat(label=node_labels[i], temperature=T1, fixed_temperature=T1, material='Al6061'))
+        nodes1.append(Thermostat(label=node_labels[i], temperature=T1, fixed_temperature=T1, material_specific_heat='Al6061'))
     elif i == N_nodes - 1:
-        nodes1.append(Thermostat(label=node_labels[i], temperature=T1, fixed_temperature=T1, material='Al6061'))
+        nodes1.append(Thermostat(label=node_labels[i], temperature=T1, fixed_temperature=T1, material_specific_heat='Al6061'))
     else:
-        nodes1.append(Node(label=node_labels[i], temperature=T0, material='Al6061'))
+        nodes1.append(Node(label=node_labels[i], temperature=T0, material_specific_heat='Al6061'))
 
 # Assign node masses
 for i in range(N_nodes):
@@ -211,7 +211,7 @@ for i in range(N_nodes - 1):
         type_='conduction',
         L=L_links[i],
         A=A,
-        material='Al6061'
+        material_conductivity='Al6061'
     ))
 
 # Network
@@ -253,13 +253,13 @@ plt.show()
 nodes2 = []
 for i in range(N_nodes):
     if i == 0:
-        nodes2.append(Thermostat(label=node_labels[i], temperature=293.15, fixed_temperature=293.15, material='Al6061'))
+        nodes2.append(Thermostat(label=node_labels[i], temperature=293.15, fixed_temperature=293.15, material_specific_heat='Al6061'))
     elif i == N_nodes - 1:
-        nodes2.append(Thermostat(label=node_labels[i], temperature=293.15, fixed_temperature=293.15, material='Al6061'))
+        nodes2.append(Thermostat(label=node_labels[i], temperature=293.15, fixed_temperature=293.15, material_specific_heat='Al6061'))
     elif i == N_nodes // 2:
-        nodes2.append(Heater(label=node_labels[i], temperature=293.15, behaviour_func=100.0, material='Al6061'))
+        nodes2.append(Heater(label=node_labels[i], temperature=293.15, behaviour_func=100.0, material_specific_heat='Al6061'))
     else:
-        nodes2.append(Node(label=node_labels[i], temperature=293.15, material='Al6061'))
+        nodes2.append(Node(label=node_labels[i], temperature=293.15, material_specific_heat='Al6061'))
 
 # Assign node masses
 for i in range(N_nodes):
@@ -279,7 +279,7 @@ for i in range(N_nodes - 1):
         type_='conduction',
         L=L_links[i],
         A=A,
-        material='Al6061'
+        material_conductivity='Al6061'
     ))
 
 # Network
@@ -453,9 +453,9 @@ nodes = [
     ]
 
 connections = [
-    Connection(nodes[0], nodes[1], type_='conduction',L=2e-2, A=10, material='Uranium'),
-    Connection(nodes[1], nodes[2], type_='conduction',L=2e-2, A=10, material='Uranium'),
-    Connection(nodes[2], nodes[3], type_='contact', h_c=45, A=10) # air convection
+    Connection(nodes[0], nodes[1], type_='conduction',L=2e-2, A=10, material_conductivity=28),
+    Connection(nodes[1], nodes[2], type_='conduction',L=2e-2, A=10, material_conductivity='Uranium'),
+    Connection(nodes[2], nodes[3], type_='convection', h_c=45, A=10) # air convection
     ]
 net = Network(nodes, connections)
 res = net.solve_steady(verbose=False)
