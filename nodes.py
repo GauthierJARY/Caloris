@@ -4,43 +4,73 @@ Created on Sun Oct 12 18:47:50 2025
 
 @author: G.J.
 """
+# nodes.py
+
 class Node:
-    def __init__(self, label, temperature=300.0, is_boundary=False, heat_input=0.0, material_specific_heat=None, mass=1e-8):
-        """
-        Represents a thermal node.
-        """
-        self.label = label
-        self.temperature = temperature
-        self.is_boundary = is_boundary
-        self.heat_input = heat_input
-        self.material_specific_heat = material_specific_heat
-        self.mass = mass
-    def __repr__(self):
-        return f"Node(label={self.label}, T={self.temperature:.2f}K, Q={self.heat_input:.3e}W, material_specific_heat={self.material_specific_heat}, mass={self.mass})"
+    """
+    Generic thermal node.
 
-class Heater(Node):
-    def __init__(self, *args, behaviour_func=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.behaviour = behaviour_func
-    def __repr__(self):
-        # Using self.behaviour.__name__ is often cleaner than showing the full function object
-        func_name = getattr(self.behaviour, '__name__', str(self.behaviour))
-        return f"Heater(label={self.label},T={self.temperature:.2f}K, mode={func_name})" 
-    
-class Cryostat(Node): 
-    def __init__(self, *args, behaviour_func=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.behaviour = behaviour_func
-        self.mass = 1e-8 # small mass for transient analysis
-    def __repr__(self):
-        func_name = getattr(self.behaviour, '__name__', str(self.behaviour))
-        return f'Cryostat Node label = {self.label}, T={self.temperature}K, mode={func_name}'
+    Parameters
+    ----------
+    label : str
+        User-visible name.
 
-class Thermostat(Node): 
-    def __init__(self, *args, fixed_temperature=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.behaviour = fixed_temperature
-        self.mass = 1e-8 # small mass for transient analysis
+    initial_temperature : float
+        Initial guess for steady-state or initial condition for transient.
+
+    constant_heat_input : float
+        Constant heat injected into the node [W].
+
+    specific_heat : str or float
+        Material specific heat model.
+
+    mass : float
+        Thermal mass [kg].
+
+    boundary_type : str
+        None
+        "temperature"
+        "heat_input"
+
+    boundary_value : float
+        Value associated with boundary_type.
+
+    boundary_function : callable
+        Optional dynamic boundary condition:
+            f(T, Q_dot)
+    """
+
+    def __init__(self, 
+        label,
+        initial_temperature=300.0,
+        constant_heat_input=0.0,
+        specific_heat=None, mass=1.0,
+        boundary_type=None, # can be fixed temperature or heat input
+        boundary_value=None, boundary_function=None,
+                ):
+
+        self.label = str(label)
+
+        self.initial_temperature = float(initial_temperature)
+
+        self.constant_heat_input = float(constant_heat_input)
+
+        self.specific_heat = specific_heat
+
+        self.mass = float(mass)
+
+        self.boundary_type = boundary_type
+
+        self.boundary_value = boundary_value
+
+        self.boundary_function = boundary_function
+
     def __repr__(self):
-        func_name = getattr(self.behaviour, '__name__', str(self.behaviour))
-        return f'Thermostat Node label = {self.label}, T={self.temperature}K, fixed temperature={func_name}'
+
+        return (
+            f"Node("
+            f"label='{self.label}', "
+            f"T0={self.initial_temperature:.2f} K, "
+            f"boundary={self.boundary_type}"
+            f")"
+        )

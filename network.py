@@ -9,367 +9,191 @@ Created on Sun Oct 12 18:47:50 2025
 Object-oriented Network class for steady-state thermal solving.
 Faithfully reproduces old procedural solver logic.
 """
-
 import numpy as np
-from Caloris.nodes import Thermostat, Node, Cryostat, Heater
-from Caloris.materials import cp_material_dispatch
-from scipy.optimize import root
-from scipy.integrate import solve_ivp
+import matplotlib.pyplot as plt
+# import networkx as nx
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
 class Network:
+
     def __init__(self, nodes, connections, spread=1.0):
+
         self.nodes = nodes
         self.connections = connections
-        self.node_to_idx = {node.label: idx for idx, node in enumerate(self.nodes)}
-        self.idx_to_node = {idx: node for idx, node in enumerate(self.nodes)}
-        self.N = len(nodes)
         self.spread = spread
-        self._validate_network()
-        
-    # -------------------------------------------------------------------------
-    def _validate_network(self):
-        """Validate the network structure."""
-        all_node_labels = {node.label for node in self.nodes}
-        for conn in self.connections:
-            if (conn.node_i.label not in all_node_labels or
-                conn.node_j.label not in all_node_labels):
-                raise ValueError("Connection references non-existent node")
-    # -------------------------------------------------------------------------  
-    def _get_node_temperature(self, label):
-        """Get temperature of node by label."""
-        return self.nodes[self.node_to_idx[label]].temperature
-    # -------------------------------------------------------------------------
-    def _set_node_temperature(self, label, temperature):
-        """Set temperature of node by label."""
-        self.nodes[self.node_to_idx[label]].temperature = temperature
 
-    # -------------------------------------------------------------------------
-    def build_G(self, T):
-        """Build conductance matrix G(T) without mutating nodes."""
-        N = self.N
-        G = np.zeros((N, N))
-    
+        self.N = len(nodes)
+
+        self.node_to_idx = {
+            node: idx
+            for idx, node in enumerate(nodes)
+        }
+
+        self.idx_to_node = {
+            idx: node
+            for idx, node in enumerate(nodes)
+        }
+
+        self.validate()
+
+    # ==========================================================
+    # Validation
+    # ==========================================================
+
+    def validate(self):
+
+        labels = [node.label for node in self.nodes]
+
+        if len(labels) != len(set(labels)):
+            raise ValueError(
+                "Duplicate node labels detected."
+            )
+
+        all_nodes = set(self.nodes)
+
         for conn in self.connections:
-            i = self.node_to_idx[conn.node_i.label]
-            j = self.node_to_idx[conn.node_j.label]
-    
-            T_i = T[i]
-            T_j = T[j]
-    
-            G_ij = conn.compute_G(T_i, T_j, spread=self.spread)
-    
+
+            if conn.node_i not in all_nodes:
+                raise ValueError(
+                    f"{conn.node_i.label} not found in network."
+                )
+
+            if conn.node_j not in all_nodes:
+                raise ValueError(
+                    f"{conn.node_j.label} not found in network."
+                )
+
+    # ==========================================================
+    # Conductance matrix assembly
+    # ==========================================================
+
+    def build_G(self, T):
+
+        G = np.zeros((self.N, self.N))
+
+        for conn in self.connections:
+
+            i = self.node_to_idx[conn.node_i]
+            j = self.node_to_idx[conn.node_j]
+
+            G_ij = conn.compute_G(
+                T[i],
+                T[j],
+                spread=self.spread
+            )
+
             G[i, i] += G_ij
             G[j, j] += G_ij
+
             G[i, j] -= G_ij
             G[j, i] -= G_ij
-    
+
         return G
-    
-    # -------------------------------------------------------------------------
-    def compute_fluxes(self, T, G):
-        """Compute fluxes from G and T."""
+
+    # ==========================================================
+    # Heat fluxes
+    # ==========================================================
+
+    def compute_fluxes(self, T):
+
         fluxes = {}
-    
+
         for conn in self.connections:
-            i = self.node_to_idx[conn.node_i.label]
-            j = self.node_to_idx[conn.node_j.label]
-    
-            G_ij = -G[i, j]  # off-diagonal = -G_ij
+
+            i = self.node_to_idx[conn.node_i]
+            j = self.node_to_idx[conn.node_j]
+
+            G_ij = conn.compute_G(
+                T[i],
+                T[j],
+                spread=self.spread
+            )
+
             flux = G_ij * (T[i] - T[j])
-    
-            if flux >= 0:
-                fluxes[(conn.node_i.label, conn.node_j.label)] = flux
-            else:
-                fluxes[(conn.node_j.label, conn.node_i.label)] = -flux
-    
+
+            fluxes[
+                (
+                    conn.node_i.label,
+                    conn.node_j.label,
+                    conn.connection_type
+                )
+            ] = flux
+
         return fluxes
 
-    # -------------------------------------------------------------------------
-    def apply_special_boundary_conditions(self, G, S, fluxes, C=None):
-        """
-        Apply thermostat, cryostat, and heater boundary conditions.
-        If C is provided (transient case), modify it consistently for Dirichlet nodes.
+    # def plot(self, save_path="thermal_network.png", figsize=(10, 6), node_size=900, font_size=9):
+    #     """
+    #     Visualizes the structural topology of the thermal network.
+    #     Nodes are color-coded by boundary condition types, and links are colored by physical coupling mechanisms.
+    #     """
+    #     # 1. Initialize empty networkx Graph object
+    #     G = nx.Graph()
         
-        Parameters:
-        - G: Conductance matrix (NxN)
-        - S: Source vector (Nx1)
-        - fluxes: dictionary of fluxes
-        - C: Optional capacitance matrix (NxN) for transient problems
-        """
-        for node in self.nodes:
-            idx = self.node_to_idx[node.label]
-    
-            # --- Thermostat: fixed temperature (Dirichlet)
-            if isinstance(node, Thermostat):
-                G[idx, :] = 0
-                G[idx, idx] = 1.0
-                S[idx] = node.behaviour  # fixed temperature
-                if C is not None:
-                    C[idx, :] = 0   # derivative term removed for Dirichlet enforcement
-                    C[idx, idx] = 1e-8  # small number to prevent divide-by-zero
-            # --- Cryostat: dynamic temperature via behaviour(T, Q)
-            elif isinstance(node, Cryostat):
-                G[idx, :] = 0
-                G[idx, idx] = 1.0
-                sum_incoming_fluxes = sum(value for (source, dest), value in fluxes.items() if dest == node.label)
-                S[idx] = node.behaviour(node.temperature, sum_incoming_fluxes)
-                if C is not None:
-                    C[idx, :] = 0   # remove derivative term
-                    C[idx, idx] = 1e-8  # small number to prevent divide-by-zero
-            # --- Heater: acts as power input
-            elif isinstance(node, Heater):
-                sum_incoming_fluxes = sum(value for (source, dest), value in fluxes.items() if dest == node.label)
-                S[idx] += node.behaviour(node.temperature, sum_incoming_fluxes) if callable(node.behaviour) else node.behaviour
-        if C is None :
-            return G, S
-        else: 
-            return G, S, C 
-
-    # -------------------------------------------------------------------------
-    def solve_steady(self, tol=1e-5, max_iter=100, verbose=True):
-       """Stateless steady-state solver."""
-       
-       T = np.array([node.temperature for node in self.nodes])
-       Q = np.array([node.heat_input for node in self.nodes])
-       
-       convergence_history = []
-       
-       for it in range(max_iter):
-       
-           # Build system
-           G = self.build_G(T)
-           fluxes = self.compute_fluxes(T, G)
-       
-           S = Q.copy()
-           G_bc, S_bc = self.apply_special_boundary_conditions(G.copy(), S.copy(), fluxes)
-       
-           # Solve linear system
-           try:
-               T_new = np.linalg.solve(G_bc, S_bc)
-           except np.linalg.LinAlgError:
-               raise ValueError("❌ Singular G matrix")
-       
-           # Physical constraint
-           T_new = np.maximum(T_new, 0.0)
-       
-           # Convergence
-           err = np.max(np.abs(T_new - T))
-           convergence_history.append(err)
-       
-           if err < tol:
-               if verbose:
-                   print(f"✅ Converged in {it+1} iterations.")
-               break
-       
-           # Under-relaxation
-           T = 0.5 * T + 0.5 * T_new
-       
-       # Final recompute (IMPORTANT)
-       G = self.build_G(T)
-       fluxes = self.compute_fluxes(T, G)
-       
-       # Store internally (fix #5)
-       self._last_G = G
-       self._last_fluxes = fluxes
-       self._last_T = T
-       
-       # Return structured result (fix #2)
-       return {
-           "T": T,
-           "fluxes": fluxes,
-           "G": G,
-           "convergence": convergence_history
-       }
-   
-    # -------------------------------------------------------------------------
-    def solve_steady_scipy(self, tol=1e-5, max_iter=150, method='hybr', verbose=True):
-        """
-        Solve for steady-state temperatures using scipy.optimize.root instead of manual Picard iteration.
-        Solves F(T) = 0 where F(T) = G(T)*T - S(T).
-        """
-
-        # Initial guess from current node temperatures
-        T0 = np.array([node.temperature for node in self.nodes])
-
-        def residual(T):
-            """Compute residual vector F(T) = G(T)*T - S(T)."""
-            # Update node temperatures
-            for i, node in enumerate(self.nodes):
-                node.temperature = T[i]
-
-            # Build conductance and flux dictionary
-            G, fluxes = self.build_G(T)
-            S = np.array([node.heat_input for node in self.nodes])
-
-            # Apply special boundary conditions (Dirichlet, etc.)
-            G_bc, S_bc = self.apply_special_boundary_conditions(G.copy(), S.copy(), fluxes)
-
-            # Compute residual F(T)
-            F = G_bc @ T - S_bc
-            return F
-
-        # Solve nonlinear system using scipy.root
-        sol = root(residual, T0, method=method, tol=tol, options={'maxfev': max_iter})
-
-        if not sol.success:
-            raise RuntimeError(f"❌ Steady solver failed to converge: {sol.message}")
-
-        T_final = sol.x
-
-        # Update node temperatures
-        for i, node in enumerate(self.nodes):
-            node.temperature = T_final[i]
-
-        # Recompute final fluxes
-        _, fluxes = self.build_G(T)
-
-        if verbose:
-            print(f"✅ Steady-state converged: {sol.message}")
-            print(f"Iterations: {sol.nfev} | Final max residual: {np.max(np.abs(sol.fun)):.3e}")
-
-        return T_final, fluxes, sol
-
-    
-    # -------------------------------------------------------------------------
-    def build_C(self):
-        """
-        Build diagonal matrix C of thermal capacitances for each node.
-        Care when manipulating c_p or C_p and addition of the mass or volumic mass rho !
-        """
-        C_diag = np.array([node.mass * cp_material_dispatch(node.temperature, node.material_specific_heat) for node in self.nodes])
-        return np.diag(C_diag) # should add the spreading for uncertainty
-
-    # -------------------------------------------------------------------------
-    def solve_transient(self, t_max, dt=1e-3, T_init=None, verbose=True):
-        """
-        Solve the transient heat transfer problem using implicit Euler method.
-        
-        Parameters:
-        - t_max: total simulation time
-        - dt: time step size
-        - T_init: initial temperature array (optional)
-        - verbose: whether to print time-step progress
-        
-        Returns:
-        - T_hist: list of temperature arrays at each time step
-        - time_points: list of time points
-        """
-        
-        n_steps = int(t_max / dt)
-        T = np.array([node.temperature for node in self.nodes]) if T_init is None else T_init.copy()
-        Q = np.array([node.heat_input for node in self.nodes])
-    
-        T_hist = [T.copy()]
-        time_points = [0.0]
-    
-        for step in range(1, n_steps + 1):
-            t = step * dt
-    
-            # Fixed-point (Picard) iteration for nonlinear solve, simple but less robust, one may consider to implement NEwton Raphson method instead
-            for _ in range(20):  # max inner iterations
-                # Update node temperatures (required if G, C depend on T)
-                for i, node in enumerate(self.nodes):
-                    node.temperature = T[i]
-    
-                G = self.build_G(T)
-                fluxes = self.compute_fluxes(T, G)
-                C = self.build_C()
-                S = Q.copy()
-    
-                # Build system: (C/dt + G) T_new = C*T/dt + S
-                # Apply special BCs (thermostats, cryostats, heaters, etc.) to A b and no longer to G S 
-                # Apply BCs correctly
-                G_bc, S_bc, C_bc = self.apply_special_boundary_conditions(G.copy(), S.copy(), fluxes, C=C)
-                
-                # Build system: (C/dt + G) T_new = C*T/dt + S
-                A = C_bc / dt + G_bc
-                b = C_bc @ (T / dt) + S_bc
-                try:
-                    T_new = np.linalg.solve(A, b)
-                except np.linalg.LinAlgError:
-                    raise ValueError("❌ Singular matrix in transient solver")
-    
-                # Enforce physical realism
-                T_new = np.maximum(T_new, 0.0)
-    
-                # Check convergence of nonlinear solve
-                err = np.max(np.abs(T_new - T))
-                if err < 1e-5:
-                    break
-                # Optionally do under-relaxation if needed
-                T = 0.5 * T + 0.5 * T_new
-    
-            # Update current temperature
-            T = T_new
-            T_hist.append(T.copy())
-            time_points.append(t)
-    
-            if verbose and step % 10 == 0:
-                print(f"Step {step}/{n_steps} | Time = {t:.2f} | max(T) = {T.max():.2f}")
-    
-        return np.array(T_hist), np.array(time_points)
-
-    
-    # -----------------------------
-    # rhs_transient with correct BC enforcement
-    # -----------------------------
-    def rhs_transient(self, t, T):
-        """
-        Right-hand side function for transient system: dT/dt = f(T, t)
-        """
-        # Update node temperatures
-        for i, node in enumerate(self.nodes):
-            node.temperature = T[i]
-    
-        # Build matrices
-        G = self.build_G(T)
-        fluxes = self.compute_fluxes(T, G)  # compute fluxes separately
-        C = self.build_C()
-        S = np.array([node.heat_input for node in self.nodes])
-    
-        # Apply boundary conditions (pass C to handle Dirichlet)
-        G, S, C = self.apply_special_boundary_conditions(G.copy(), S.copy(), fluxes, C=C)
-    
-        # Invert C (diagonal)
-        C_inv = np.diag(1.0 / np.diag(C))
-        
-        # Compute dT/dt
-        dTdt = C_inv @ (-G @ T + S)
-        return dTdt
-
-
-    # -------------------------------------------------------------------------
-    # -----------------------------
-    # solve_ivp_transient uses rhs_transient
-    # -----------------------------
-    def solve_ivp_transient(self, t_span, dt=1.0, T_init=None, method='BDF', rtol=1e-6, atol=1e-9, verbose=True):
-        if T_init is None:
-            T_init = np.array([node.temperature for node in self.nodes])
+    #     # 2. Add nodes and capture their boundary condition profiles
+    #     for node in self.nodes:
+    #         label_text = node.label
+    #         b_type = getattr(node, 'boundary_type', None)
+    #         if b_type:
+    #             label_text += f"\n({b_type})"
+    #         G.add_node(node.label, display_label=label_text, boundary_type=b_type)
             
-        t_eval = np.arange(t_span[0], t_span[1] + dt/2, dt)
-
-        sol = solve_ivp(
-            fun=self.rhs_transient,
-            t_span=t_span,
-            y0=T_init,
-            method=method,
-            t_eval=t_eval,
-            rtol=rtol,
-            atol=atol
-        )
-    
-        # Update final temperatures
-        for i, node in enumerate(self.nodes):
-            node.temperature = sol.y[i, -1]
-    
-        if verbose:
-            print(f"✅ Transient solve complete: {len(sol.t)} time points, final T_mean = {np.mean(sol.y[:, -1]):.2f} K")
-    
-        return sol
-
-
-
-
-
-
-
+    #     # 3. Add topology edges mapping physical connections
+    #     for conn in self.connections:
+    #         c_type = getattr(conn, 'connection_type', 'conduction')
+    #         G.add_edge(conn.node_i.label, conn.node_j.label, connection_type=c_type)
+            
+    #     # 4. Set aesthetic color pallets
+    #     edge_colors_map = {
+    #         'conduction': '#d95f02',   # Terracotta orange
+    #         'conductance': '#e7298a',  # Vibrant pink
+    #         'convection': '#1b7837',   # Forest green
+    #         'radiation': '#7570b3'     # Slate purple
+    #     }
+        
+    #     node_colors_map = {
+    #         'temperature': '#fc8d59',  # Light red/salmon for fixed temperature
+    #         'heat_input': '#fee08b',   # Yellow/gold for active heaters
+    #         None: '#e0f3f8'            # Soft blue for un-bounded floating nodes
+    #     }
+        
+    #     # 5. Compute network node spacing layouts using spring forces
+    #     pos = nx.spring_layout(G, seed=42, k=1.5 / np.sqrt(len(G.nodes)))
+        
+    #     # Gather assigned node colors
+    #     node_colors = [node_colors_map.get(G.nodes[n]['boundary_type'], '#e0f3f8') for n in G.nodes]
+        
+    #     # 6. Build the canvas and render components
+    #     fig, ax = plt.subplots(figsize=figsize)
+        
+    #     # Draw physical node bodies
+    #     nx.draw_networkx_nodes(G, pos, node_size=node_size, node_color=node_colors, edgecolors='black', ax=ax)
+        
+    #     # Draw string identifiers inside/above nodes
+    #     labels = nx.get_node_attributes(G, 'display_label')
+    #     nx.draw_networkx_labels(G, pos, labels=labels, font_size=font_size, font_weight='bold', ax=ax)
+        
+    #     # Draw physical paths grouped by type to neatly organize the legend labels
+    #     unique_edge_types = set(nx.get_edge_attributes(G, 'connection_type').values())
+    #     for etype in unique_edge_types:
+    #         edgelist = [(u, v) for u, v, d in G.edges(data=True) if d['connection_type'] == etype]
+    #         color = edge_colors_map.get(etype, '#969696')
+    #         nx.draw_networkx_edges(G, pos, edgelist=edgelist, width=2.5, edge_color=color, ax=ax, label=etype)
+            
+    #     # 7. Construct contextual legend maps
+    #     legend_elements = [
+    #         Patch(facecolor='#e0f3f8', edgecolor='black', label='Floating Node'),
+    #         Patch(facecolor='#fc8d59', edgecolor='black', label='Fixed Temp BC'),
+    #         Patch(facecolor='#fee08b', edgecolor='black', label='Heat Input BC'),
+    #     ]
+    #     for etype in unique_edge_types:
+    #         color = edge_colors_map.get(etype, '#969696')
+    #         legend_elements.append(Line2D([0], [0], color=color, lw=2.5, label=f"{etype.capitalize()} Link"))
+            
+    #     ax.legend(handles=legend_elements, loc='upper right', frameon=True, shadow=True)
+    #     ax.set_title("Caloris Thermal Network Topology Visualization", fontsize=12, fontweight='bold')
+    #     ax.axis('off')
+        
+    #     # 8. Save output plot
+    #     plt.savefig(save_path, bbox_inches='tight', dpi=150)
+    #     plt.close()
