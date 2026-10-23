@@ -1,227 +1,198 @@
 # -*- coding: utf-8 -*-
 """
-Excel interface for Caloris thermal solver
-Created on Mon Apr  6 18:55:29 2026
+Excel configuration reader and CSV result exporter for Caloris
+Created on Mon Apr  6 21:10:00 2026
 @author: G.J
+Caloris Package - Excel Runner & Configuration Manager
+Reads configuration from Excel, runs steady-state simulation, 
+and writes results back into the workbook.
 """
 
+import os
 import pandas as pd
 
-from Caloris.nodes import Node, Thermostat, Heater
+from Caloris.nodes import Node
 from Caloris.connections import Connection
 from Caloris.network import Network
-import ast
+from Caloris.steady_solver import SteadySolver
 
 
-def _to_float(val):
-    """Convert spreadsheet values to float, even if it's a simple Excel formula."""
+def load_network_from_excel(excel_file):
+    """
+    Reads nodes, connections, and network-level parameters from Excel sheets.
+    """
+    if not os.path.exists(excel_file):
+        raise FileNotFoundError(f"Excel configuration file not found at: '{excel_file}'")
 
-    if pd.isna(val):
-        return 0.0
-    if isinstance(val, str) and val.startswith("="):
-        # remove '=' and safely evaluate simple math expressions
-        expr = val[1:]
-        try:
-            return float(ast.literal_eval(expr.replace("^", "**")))
-        except Exception:
-            raise ValueError(f"Cannot evaluate formula: {val}")
-    return float(val)
+    # 1. Lecture des Nœuds
+    df_nodes = pd.read_excel(excel_file, sheet_name="nodes", engine="openpyxl")
+    
+    nodes_dict = {}  # Pour relier facilement les connexions par la suite
+    node_list = []
 
-
-def load_nodes(file):
-    """Read nodes sheet and construct Node objects, robust to empty cells."""
-    df = pd.read_excel(file, sheet_name="nodes", header=0)
-
-    nodes = []
-
-    for _, row in df.iterrows():
-        if pd.isna(row["class"]):
-            continue  # skip completely empty rows
-
-        label = str(row["label"]).strip()
-        node_class = str(row["class"]).strip()
-
-        if node_class == "Node":
-            node = Node(label=label)
-
-        elif node_class == "Thermostat":
-            T = _to_float(row["temperature"])
-            node = Thermostat(label=label, fixed_temperature=T)
-
-        elif node_class == "Heater":
-            Q = _to_float(row["behaviour"])  # now returns 0 if blank
-            node = Heater(label=label, behaviour_func=Q)
-
-        else:
-            raise ValueError(f"Unknown node class: {node_class}")
-
-        nodes.append(node)
-
-    return nodes
-
-
-def load_connections(file, nodes):
-    """Read links sheet and construct Connection objects."""
-
-    df = pd.read_excel(file, sheet_name="links", header=0)
-
-    connections = []
-
-    for _, row in df.iterrows():
-
-        if pd.isna(row["Node_i index"]):
+    for _, row in df_nodes.iterrows():
+        # Ignorer les lignes vides
+        if pd.isna(row.get("label")):
             continue
 
-        i = int(row["Node_i index"])
-        j = int(row["Node_j index"])
+        node = Node(
+            label=str(row["label"]),
+            number=int(row["number"]) if pd.notna(row.get("number")) else None,
+            group_number=int(row["group_number"]) if pd.notna(row.get("group_number")) else 0,
+            node_type=str(row.get("node_type", "D")).strip().upper(),
+            initial_temperature=float(row.get("initial_temperature", 300.0)),
+            qdot=float(row.get("qdot", 0.0)),
+            mass=float(row.get("mass", 1.0)),
+            capacitance=row.get("capacitance", 1.0),
+            boundary_type=str(row["boundary_type"]).strip() if pd.notna(row.get("boundary_type")) else None,
+            boundary_value=float(row["boundary_value"]) if pd.notna(row.get("boundary_value")) else None
+        )
 
-        type_ = str(row["type"]).strip()
+        nodes_dict[node.label] = node
+        node_list.append(node)
 
+    # 2. Lecture des Connexions (Links)
+    df_links = pd.read_excel(excel_file, sheet_name="links", engine="openpyxl")
+    connection_list = []
+
+    for _, row in df_links.iterrows():
+        if pd.isna(row.get("label")) or pd.isna(row.get("node_i")) or pd.isna(row.get("node_j")):
+            continue
+
+        node_i_label = str(row["node_i"])
+        node_j_label = str(row["node_j"])
+
+        if node_i_label not in nodes_dict or node_j_label not in nodes_dict:
+            raise KeyError(
+                f"Excel Link Error: Connection '{row['label']}' references node '{node_i_label}' "
+                f"or '{node_j_label}' which is not defined in the 'nodes' sheet."
+            )
+
+        # Récupération dynamique de tous les paramètres optionnels de la ligne
         kwargs = {}
+        possible_fields = [
+            "S", "L", "material", "F_ij", "e_i", "e_j", "S_i", "S_j",
+            "A", "h_c", "G_value", "G_function_name"
+        ]
+        
+        for field in possible_fields:
+            if field in row and pd.notna(row[field]):
+                # Conversion propre si c'est numérique ou string
+                val = row[field]
+                kwargs[field] = val
 
-        L = _to_float(row["L"])
-        A = _to_float(row["A"])
-        h_c = _to_float(row["h_c"])
-        material_conductivity = row["material_conductivity"]
-        e_i = _to_float(row["e_i"])
-        e_j = _to_float(row["e_j"])
-        S_i = _to_float(row["S_i"])
-        S_j = _to_float(row["S_j"])
-        F_ij = _to_float(row["F_ij"])
-        if L is not None:
-            kwargs["L"] = L
-
-        if A is not None:
-            kwargs["A"] = A
-
-        if h_c is not None:
-            kwargs["h_c"] = h_c
-            
-        if e_i is not None:
-            kwargs["e_i"] = e_i
-            
-        if e_j is not None:
-            kwargs["e_j"] = e_j
-            
-        if S_i is not None:
-            kwargs["S_i"] = S_i
-            
-        if S_j is not None:
-            kwargs["S_j"] = S_j
- 
-        if F_ij is not None:
-            kwargs["F_ij"] = F_ij
-            
-        # if not pd.isna(material_conductivity):
-        #     kwargs["material_conductivity"] = str(material_conductivity)
-        if not pd.isna(material_conductivity):
-            if isinstance(material_conductivity, (int, float)):
-                kwargs["material_conductivity"] = float(material_conductivity)
-            else:
-                # Could still be a numeric string like "14.2"
-                try:
-                    kwargs["material_conductivity"] = float(material_conductivity)
-                except (ValueError, TypeError):
-                    kwargs["material_conductivity"] = str(material_conductivity).strip()
-            
-        connection = Connection(
-            nodes[i],
-            nodes[j],
-            type_=type_,
+        conn = Connection(
+            label=str(row["label"]),
+            node_i=nodes_dict[node_i_label],
+            node_j=nodes_dict[node_j_label],
+            connection_type=str(row["type"]).strip().upper(),
             **kwargs
         )
 
-        connections.append(connection)
+        connection_list.append(conn)
 
-    return connections
+    # 3. Lecture optionnelle des paramètres globaux (ex: spread)
+    spread = 1.0
+    try:
+        df_solver = pd.read_excel(excel_file, sheet_name="solver_params", engine="openpyxl")
+        # On cherche une ligne où le paramètre est 'spread'
+        for _, row in df_solver.iterrows():
+            if str(row.get("parameter")).strip().lower() == "spread":
+                spread = float(row.get("value", 1.0))
+    except Exception:
+        # Si l'onglet 'solver_params' n'existe pas, on garde la valeur par défaut 1.0
+        pass
+
+    network = Network(nodes=node_list, connections=connection_list, spread=spread)
+    return network
 
 
-def load_network(file):
-    """Construct full thermal network from Excel file."""
-
-    nodes = load_nodes(file)
-    connections = load_connections(file, nodes)
-
-    return Network(nodes, connections)
-
-
-def save_results_to_excel(file, T, fluxes, node_to_idx, G_matrix, convergence):
+def load_solver_config(excel_file):
     """
-    Write results into an Excel sheet in a clean tabular format.
-    Works with Network.solve_steady outputs.
+    Reads solver execution settings from the 'solver_params' sheet if available.
     """
+    config = {"tol": 1e-5, "max_iter": 100, "relaxation": 0.5, "verbose": True}
+    
+    try:
+        df_solver = pd.read_excel(excel_file, sheet_name="solver_params", engine="openpyxl")
+        for _, row in df_solver.iterrows():
+            param = str(row.get("parameter")).strip().lower()
+            val = row.get("value")
+            if pd.notna(val):
+                if param in ["tol"]:
+                    config["tol"] = float(val)
+                elif param in ["max_iter"]:
+                    config["max_iter"] = int(val)
+                elif param in ["relaxation"]:
+                    config["relaxation"] = float(val)
+                elif param in ["verbose"]:
+                    config["verbose"] = bool(val)
+    except Exception:
+        pass
 
-    # Reverse mapping (idx → node label)
-    idx_to_node = {idx: node for node, idx in node_to_idx.items()}
+    return config
 
-    # -------------------------
-    # 1. Node temperatures
-    # -------------------------
-    df_T = pd.DataFrame({
-        "Node": [idx_to_node[i] for i in range(len(T))],
-        "Temperature [K]": T
+
+def write_results_to_excel(excel_file, network, result):
+    """
+    Writes simulation results back into dedicated sheets of the Excel workbook.
+    """
+    # 1. Tableau des températures par nœud
+    nodes_data = []
+    for node, T in zip(network.nodes, result.T):
+        nodes_data.append({
+            "Number": node.number,
+            "Label": node.label,
+            "Type": node.node_type,
+            "Boundary": node.boundary_type if node.node_type == "B" else "None",
+            "Temperature [K]": T,
+            "Temperature [C]": T - 273.15
+        })
+    df_nodes_res = pd.DataFrame(nodes_data)
+
+    # 2. Tableau des flux par liaison
+    flux_data = []
+    for key, q in result.fluxes.items():
+        node_i, node_j, link_type = key
+        flux_data.append({
+            "From": node_i,
+            "To": node_j,
+            "Type": link_type,
+            "Heat Flux [W]": q
+        })
+    df_flux_res = pd.DataFrame(flux_data)
+
+    # 3. Historique de convergence
+    df_conv = pd.DataFrame({
+        "Iteration": list(range(1, len(result.convergence) + 1)),
+        "Max Error [K]": result.convergence
     })
 
-    # -------------------------
-    # 2. Fluxes
-    # -------------------------
-    flux_rows = []
-    for (i, j), val in fluxes.items():
-        flux_rows.append({
-            "From": i,
-            "To": j,
-            "Heat Flux [W]": val
-        })
-    df_flux = pd.DataFrame(flux_rows)
+    # Écriture dans le fichier Excel existant en conservant les onglets de configuration
+    with pd.ExcelWriter(excel_file, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        df_nodes_res.to_excel(writer, sheet_name="Results_Temperatures", index=False)
+        df_flux_res.to_excel(writer, sheet_name="Results_Fluxes", index=False)
+        df_conv.to_excel(writer, sheet_name="Results_Convergence", index=False)
 
-    # -------------------------
-    # 3. G matrix
-    # -------------------------
-    df_G = pd.DataFrame(G_matrix)
-    df_G.index = [idx_to_node[i] for i in range(len(G_matrix))]
-    df_G.columns = [idx_to_node[i] for i in range(len(G_matrix))]
+    print(f"Simulation results successfully written back to: {excel_file}")
 
-    # -------------------------
-    # 4. Convergence
-    # -------------------------
-    # If convergence is a list of errors, report max error and iterations
-    if isinstance(convergence, list):
-        df_conv = pd.DataFrame({
-            "Metric": ["Max error", "Iterations"],
-            "Value": [max(convergence), len(convergence)]
-        })
-    else:  # dict-like
-        df_conv = pd.DataFrame({
-            "Metric": ["Converged", "Iterations"],
-            "Value": [
-                convergence.get("converged", None),
-                convergence.get("iterations", None)
-            ]
-        })
 
-    # -------------------------
-    # Write to Excel
-    # -------------------------
-    with pd.ExcelWriter(file, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        df_T.to_excel(writer, sheet_name="results", startrow=0, index=False)
-        df_flux.to_excel(writer, sheet_name="results", startrow=0, startcol=4, index=False)
-        df_G.to_excel(writer, sheet_name="results", startrow=10)
-        df_conv.to_excel(writer, sheet_name="results", startrow=10, startcol=6, index=False)
-        
 if __name__ == "__main__":
+    # Chemin vers ton fichier Excel principal
+    excel_path = r"C:\Users\Admin\Desktop\Caloris\Caloris.xlsx"
 
-    net = load_network("Caloris.xlsx")
-    res = net.solve_steady(verbose=False)
-    T = res["T"]
-    fluxes = res["fluxes"]
-    convergence_history = res["convergence"]
-    # save_results_to_excel(
-    # "Caloris_results.xlsx",
-    # T,
-    # fluxes,
-    # net.node_to_idx,
-    # net._last_G,
-    # {"converged": True, "iterations": len(res["convergence"])}
-    # )
-    print((T-273))
+    print("--- 1. Chargement du réseau depuis Excel ---")
+    network, excel_path = load_network_from_excel(excel_path)
+    print(f"Réseau chargé : {network.N} nœuds, {len(network.connections)} connexions.")
 
+    print("--- 2. Chargement des paramètres du solveur ---")
+    solver_config = load_solver_config(excel_path)
+
+    print("--- 3. Exécution de la simulation stationnaire ---")
+    solver = SteadySolver(network=network)
+    result = solver.solve(**solver_config)
+
+    print("--- 4. Exportation des résultats dans Excel ---")
+    write_results_to_excel(excel_path, network, result)
+
+    print("Process finished successfully.")

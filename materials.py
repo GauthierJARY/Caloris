@@ -1,115 +1,136 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Oct 12 18:55:24 2025
+Created on Dynamic Excel Framework Migration
+Created on Dynamic Excel Framework Migration
+Modified for Case-Insensitive Lookups
+Caloris Package - Materials & Dynamic Properties Module
+Generic database lookup and interpolation engine using Excel files.
 
-@author: Admin
+@GJ
 """
-import numpy as np
+
+import os
+import pandas as pd
+from scipy.interpolate import interp1d
 
 
-def lambda_material_dispatch(T, material_conductivity):
-    # --- 6061-T6 Aluminum ---
-    if material_conductivity == 'Al6061':
-        logT = np.log10(T)
-        a, b, c, d, e, f, g, h, i = 0.07918, 1.0957, -0.07277, 0.08084, 0.02803, -0.09464, 0.04179, -0.00571, 0.0
-        poly = a + b*logT + c*logT**2 + d*logT**3 + e*logT**4 + f*logT**5 + g*logT**6 + h*logT**7 + i*logT**8
-        return 10**poly
-    # --- 6063-T5 Aluminum ---
-    elif material_conductivity == 'Al6063':
-        logT = np.log10(T)
-        a, b, c, d, e, f, g, h, i = 22.401433, -141.13433, 394.95461, -601.15377, 547.83202, -305.99691, 102.38656, -18.810237, 1.4576882
-        poly = a + b*logT + c*logT**2 + d*logT**3 + e*logT**4 + f*logT**5 + g*logT**6 + h*logT**7 + i*logT**8
-        return 10**poly
-        # --- Fonction lambda SST304 ---
-    elif material_conductivity == 'SST304':
-            logT = np.log10(T)
-            a,b,c,d,e,f,g,h,i = -1.4087,1.3982,0.2543,-0.6260,0.2334,0.4256,-0.4658,0.1650,-0.0199
-            poly = a + b*logT + c*logT**2 + d*logT**3 + e*logT**4 + f*logT**5 + g*logT**6 + h*logT**7 + i*logT**8
-            return 10**poly
-        # --- Fonction lambda SST304L ---
-    elif material_conductivity == 'SST304L':
-            logT = np.log10(T)
-            a,b,c,d,e,f,g,h,i = -1.4087,1.3982,0.2543,-0.6260,0.2334,0.4256,-0.4658,0.1650,-0.0199
-            poly = a + b*logT + c*logT**2 + d*logT**3 + e*logT**4 + f*logT**5 + g*logT**6 + h*logT**7 + i*logT**8
-            return 10**poly
-        # --- Fonction lambda GFRP ---
-    elif material_conductivity == 'CFRP_warp':
-            logT = np.log10(T)
-            a,b,c,d,e,f,g,h,i = -2.64827, 8.80228, -24.8998, 41.1625, -39.8754, 23.1778, -7.95635, 1.48806, -0.11701
-            poly = a + b*logT + c*logT**2 + d*logT**3 + e*logT**4 + f*logT**5 + g*logT**6 + h*logT**7 + i*logT**8
-            return 10**poly
-        # --- Fonction lambda Cu RRR=50 ---
-    elif material_conductivity == 'Cu_RRR50':
-            logT = np.log10(T)
-            a,b,c,d,e,f,g,h,i = 1.8743,-0.41538,-0.6018,0.13294, 0.26426, -0.0219, -0.051276, 0.0014871, 0.003723
-            poly = (a + c*T**0.5 + e*T + g*T**1.5 + i*T**2)/(1 + b*T**0.5 + d*T + f*T**1.5 + h*T**2)
-            return 10**poly
-    elif material_conductivity == 'Cu_RRR10':
-        return lambda_material_dispatch(T,'Cu_RRR50')/5
-    elif material_conductivity == 'Cu_RRR20':
-        return lambda_material_dispatch(T,'Cu_RRR50')/2.5
-    elif material_conductivity == 'Cu_RRR100':
-        a, b, c, d, e, f, g, h, i = 2.2154, -0.47461, -0.88068, 0.13871, 0.29505, -0.02043, -0.04831, 0.001281, 0.003207
-        poly = (a + c*T**0.5 + e*T + g*T**1.5 + i*T**2)/(1 + b*T**0.5 + d*T + f*T**1.5 + h*T**2)
-        return 10**poly
-    elif material_conductivity == 'Cu_RRR500':
-        a, b, c, d, e, f, g, h, i = 2.8075, -0.54074, -1.2777, 0.15362, 0.36444, -0.02105, -0.051727, 0.0012226, 0.0030964
-        poly = (a + c*T**0.5 + e*T + g*T**1.5 + i*T**2)/(1 + b*T**0.5 + d*T + f*T**1.5 + h*T**2)
-        return 10**poly
-    elif material_conductivity == 'PEEK':
-        # Coefficients a1 à a6
-        coefficients = [1.0636976e-1, -1.6340006e-1, 9.4941322e-2, -2.4117988e-2, 2.8797748e-3, -1.3025208e-4 ]
-        ln_term = np.log(T + 1)  # ln(T + 1)
-        # Calcule A(T) = sum(ai * [ln(T+1)]^i) pour i de 1 à 6
-        A_T = sum(coeff * ln_term**(i+1) for i, coeff in enumerate(coefficients))
-        A_T = np.maximum(A_T, 0.0108)
-        return A_T
-    elif material_conductivity == 'Uranium':
-        return 28
-    else:
-        print(f'Warning: No lambda found for {material_conductivity}, default values used !')
-        return 5000
-
-def contact_conductance_dispatch(T, G_function_name):
-    if G_function_name == 'default':
-        return 10.0
-    elif G_function_name == 'custom_conductance_200kN':
-        """A sample function for direct_G that depends on temperature."""
-        # return 0.1 + 0.005 * T
-        return 2000
-    elif G_function_name == 'custom_conductance_100kN':
-        """A sample function for direct_G that depends on temperature."""
-        # return 0.1 + 0.005 * T
-        return 100
-    elif G_function_name == 'custom_conductance_G5':
-        """A sample function for direct_G that depends on temperature."""
-        return 5
-    elif G_function_name == 'custom_conductance_G1':
-        """A sample function for direct_G that depends on temperature."""
-        return 1
-    else:
-        print('Warning: No contact parameters found, default values used !')
-        return 1.0
-
-def cp_material_dispatch(T, material_specific_heat):
+class PropertyDatabase:
     """
-    Returns specific heat [J/kg/K] for a given material as a function of temperature T [K].
-    Uses curve-fit polynomial in log10(T) for Al6061, SST304L, Cu_RRR20, or returns default 400.
+    Loads an Excel properties database and handles linear interpolation 
+    for materials or user-defined function sheets.
     """
-    T = max(T, 1.0)  # avoid log10(0)
-    
-    if material_specific_heat == 'SST304L':
-        return 385 + 0.02 * (T - 300)
-    
-    elif material_specific_heat == 'Al6061':
-        logT = np.log10(T)
-        # coefficients from your table for Cp fit
-        a,b,c,d,e,f,g,h,i = 46.6467, -314.292, 866.662, -1298.3, 1162.27, -637.795, 210.351, -38.3094, 2.96344
-        poly = a + b*logT + c*logT**2 + d*logT**3 + e*logT**4 + f*logT**5 + g*logT**6 + h*logT**7 + i*logT**8
-        return 10**poly
-    
-    elif material_specific_heat == 'Cu_RRR20':
-        return 385 + 0.02 * (T - 300)
-    
-    else:
-        return 400  # default fallback
+
+    def __init__(self, excel_path="material_properties.xlsx"):
+        if not os.path.exists(excel_path):
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            excel_path = os.path.join(base_dir, excel_path)
+
+        if not os.path.exists(excel_path):
+            raise FileNotFoundError(
+                f"[Caloris Database Error]: Could not locate property Excel database at: '{excel_path}'"
+            )
+
+        self.excel_path = excel_path
+        self.raw_data = pd.read_excel(excel_path, sheet_name=None)
+        self.interpolators = {}
+        self._build_interpolators()
+
+    def _build_interpolators(self):
+        """Processes each sheet and maps every property column to a 1D interpolator."""
+        for sheet_name, df in self.raw_data.items():
+            sheet_key = str(sheet_name).strip().lower()
+
+            # Normalisation des entêtes de colonnes (minuscules sans espaces parasites)
+            df.columns = [str(col).strip().lower() for col in df.columns]
+
+            # Recherche de la colonne de température (ex: 'temperature', 't', 'temp', 'temperature (k)')
+            t_col = [col for col in df.columns if "temp" in col or col == "t"]
+            if not t_col:
+                print(f"Warning: No temperature column found in sheet '{sheet_name}'. Skipping.")
+                continue
+
+            t_col_name = t_col[0]
+            T_data = df[t_col_name].values
+            self.interpolators[sheet_key] = {}
+
+            # Création d'un interpolateur pour chaque propriété présente dans la feuille
+            for col in df.columns:
+                if col == t_col_name:
+                    continue
+
+                prop_values = df[col].values
+                # Interpolation linéaire avec extrapolation de sécurité sur les bords
+                self.interpolators[sheet_key][col] = interp1d(
+                    T_data,
+                    prop_values,
+                    kind="linear",
+                    bounds_error=False,
+                    fill_value="extrapolate",
+                )
+
+    def query(self, sheet_name, prop_name, temperature, fallback_value=None):
+        """
+        Generic query engine.
+        
+        Parameters
+        ----------
+        sheet_name : str
+            Name of the Excel sheet (material name or custom function name).
+        prop_name : str
+            Name of the property column (e.g. 'lambda', 'cp', 'conductance', 'h_c').
+        temperature : float
+            Temperature at which to evaluate the property [K].
+        fallback_value : float, optional
+            Default value if key/sheet is missing. Raises ValueError if None and missing.
+        """
+        sheet_key = str(sheet_name).strip().lower()
+        prop_key = str(prop_name).strip().lower()
+
+        # 1. Vérification de la présence de la feuille
+        if sheet_key not in self.interpolators:
+            if fallback_value is not None:
+                print(f"Warning: Sheet '{sheet_name}' not found in Excel. Using fallback: {fallback_value}")
+                return float(fallback_value)
+            raise KeyError(
+                f"[PropertyDatabase Error]: Sheet '{sheet_name}' not found in '{self.excel_path}'. "
+                f"Available sheets: {list(self.interpolators.keys())}"
+            )
+
+        # 2. Vérification de la présence de la propriété/colonne
+        if prop_key not in self.interpolators[sheet_key]:
+            # Fallback direct : si la feuille ne contient qu'une seule colonne de donnée, on la prend par défaut
+            available_props = list(self.interpolators[sheet_key].keys())
+            if len(available_props) == 1:
+                prop_key = available_props[0]
+            elif fallback_value is not None:
+                print(f"Warning: Property '{prop_name}' not found in sheet '{sheet_name}'. Using fallback: {fallback_value}")
+                return float(fallback_value)
+            else:
+                raise KeyError(
+                    f"[PropertyDatabase Error]: Property '{prop_name}' not found in sheet '{sheet_name}'. "
+                    f"Available properties in this sheet: {available_props}"
+                )
+
+        return float(self.interpolators[sheet_key][prop_key](temperature))
+
+
+# Initialisation unique à l'importation du package
+_db = PropertyDatabase("material_properties.xlsx")
+
+
+# ============================================================
+# API Publique Généraliste (Utilisée par Connection et Node)
+# ============================================================
+
+def property_dispatch(sheet_name, prop_name, T, fallback_value=None):
+    """
+    Universal dispatch function for Caloris.
+    Evaluates any material property or user-defined function from Excel.
+
+    Examples
+    --------
+    >>> property_dispatch("Aluminium_6061", "lambda", T=100.0)
+    >>> property_dispatch("My_Contact_Law", "conductance", T=100.0)
+    >>> property_dispatch("Convection_Model", "h_c", T=300.0)
+    """
+    return _db.query(sheet_name, prop_name, T, fallback_value=fallback_value)

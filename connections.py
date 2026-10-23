@@ -6,100 +6,210 @@ Created on Sun Oct 12 18:47:50 2025
 This document is part of the Caloris package.
 This script supports the creation of a class & object for the thermal network.
 Connection class for thermal network. Handles different types of thermal links: conduction, contact, radiation, direct_G.
+Caloris Package - Connection Module
+Handles thermal links between nodes: GL (Conduction), GR (Radiation), 
+GF (Convection), and GU (User-defined conductance).
 """
 
-import numpy as np
-from Caloris.materials  import lambda_material_dispatch, contact_conductance_dispatch
- 
-sigma = 5.670374419e-8  # Stefan-Boltzmann constant W/m²K⁴
+from Caloris.materials import property_dispatch
+
+sigma = 5.670374419e-8  # Stefan-Boltzmann constant [W/m²/K⁴]
+
 
 class Connection:
-    
-# initialization of the class object 
-    def __init__(self, node_i, node_j, type_, **kwargs):
+    """
+    Represents a thermal connection between two nodes in the Caloris network.
+
+    Parameters
+    ----------
+    label : str
+        User-visible name for the connection.
+    node_i : Node
+        First node instance (or node identifier).
+    node_j : Node
+        Second node instance (or node identifier).
+    connection_type : str
+        Type of connection: 'GL' (conduction), 'GR' (radiation), 
+        'GF' (convection), or 'GU' (user-defined).
+    **kwargs : dict
+        Specific parameters required depending on the connection_type.
+    """
+
+    # Définition des paramètres requis par type de liaison pour la validation
+    REQUIRED_PARAMS = {
+        "GL": ["S", "L", "material"],
+        "GR": ["F_ij"],  # e_i, e_j, S_i, S_j peuvent venir des nœuds ou des kwargs
+        "GF": ["A", "h_c"],
+        "GU": [],  # Validé dynamiquement (soit G_value, soit G_function_name)
+    }
+
+    def __init__(self, label, node_i, node_j, connection_type, **kwargs):
+        self.label = str(label)
         self.node_i = node_i
         self.node_j = node_j
-        self.type = type_  # 'conduction', 'convection', 'radiation', 'conductance'
-        self.params = kwargs  # stores L, A, material_conductivity, h_c, epsilon, F_ij, G_function_name, etc.
-        # Nota Bene: kwargs parameters are handled under dictionnary, so can be inputed and accessed likeso. 
-        # kwargs is standard name but any string with ** is working: **duck would work 
         
-# function to print quick description for the user    
+        self.connection_type = str(connection_type).upper()
+        self.params = kwargs
+
+        # Validation rigoureuse à l'initialisation
+        self._validate()
+
     def __repr__(self):
-        return f"Link between Node {self.node_i.label} and Node {self.node_j.label} of type {self.type}"
+        return (
+            f"Connection("
+            f"label='{self.label}', "
+            f"type='{self.connection_type}', "
+            f"nodes=({self.node_i.label} ↔ {self.node_j.label})"
+            f")"
+        )
 
-# compute the conductance between 2 nodes based on its type, with linearization    
-# default spread is 1, but it can be adjusted to perform uncertainty and sensibility analysis in a next step of an analysis
+    # ============================================================
+    # Validation & Sécurité
+    # ============================================================
+
+    def _validate(self):
+        """Verifies that all required parameters for the given connection type are present and valid."""
+        if self.connection_type not in self.REQUIRED_PARAMS:
+            raise ValueError(
+                f"[Connection '{self.label}']: Unknown connection type '{self.connection_type}'. "
+                f"Allowed types are: 'GL' (conduction), 'GR' (radiation), 'GF' (convection), 'GU' (user-defined)."
+            )
+
+        # 1. Validation spécifique pour GL (Conduction)
+        if self.connection_type == "GL":
+            for key in ["S", "L", "material"]:
+                if key not in self.params:
+                    raise ValueError(
+                        f"[Connection '{self.label}' - GL]: Missing mandatory parameter '{key}'. "
+                        f"Conduction requires cross-section S, length L, and material (float or str)."
+                    )
+            if float(self.params["S"]) <= 0:
+                raise ValueError(f"[Connection '{self.label}' - GL]: Cross-section S must be strictly positive.")
+            if float(self.params["L"]) <= 0:
+                raise ValueError(f"[Connection '{self.label}' - GL]: Length L must be strictly positive.")
+
+        # 2. Validation spécifique pour GR (Radiation)
+        elif self.connection_type == "GR":
+            if "F_ij" not in self.params:
+                raise ValueError(
+                    f"[Connection '{self.label}' - GR]: Missing mandatory parameter 'F_ij' (view factor)."
+                )
+            if not (0.0 <= float(self.params["F_ij"]) <= 1.0):
+                raise ValueError(f"[Connection '{self.label}' - GR]: View factor F_ij must be between 0 and 1.")
+
+        # 3. Validation spécifique pour GF (Convection)
+        elif self.connection_type == "GF":
+            for key in ["A", "h_c"]:
+                if key not in self.params:
+                    raise ValueError(
+                        f"[Connection '{self.label}' - GF]: Missing mandatory parameter '{key}'. "
+                        f"Convection requires surface area A and convective coefficient h_c (float or str)."
+                    )
+            if float(self.params["A"]) <= 0:
+                raise ValueError(f"[Connection '{self.label}' - GF]: Area A must be strictly positive.")
+
+        # 4. Validation spécifique pour GU (User-defined conductance)
+        elif self.connection_type == "GU":
+            if "G_value" not in self.params and "G_function_name" not in self.params:
+                raise ValueError(
+                    f"[Connection '{self.label}' - GU]: User-defined conductance requires either "
+                    f"'G_value' (raw float) or 'G_function_name' (str)."
+                )
+
+    # ============================================================
+    # Public API : Calcul de la Conductance G
+    # ============================================================
+
     def compute_G(self, T_i, T_j, spread=1.0):
-        """Compute conductance between nodes i and j given temperatures."""
-        # if self.type == 'conduction':
-        #     L = self.params['L'] # unit m
-        #     A = self.params['A'] # unit m²
-        #     material_conductivity = self.params['material_conductivity']
-        #     T_avg = 0.5 * (abs(T_i) + abs(T_j))
-        #     lambda_avg = lambda_material_dispatch(T_avg, material_conductivity) * spread # unit W/m/K
-        #     if lambda_avg <= 0:
-        #         print(f"❌ Zero or negative conductivity for {material_conductivity} at T_avg={T_avg}")
-        #     G_ij = lambda_avg * A / L # unit W/K
-        
-        if self.type == 'conduction':
-            L = self.params['L']  # m
-            A = self.params['A']  # m²
-            material_conductivity = self.params['material_conductivity']
-            T_avg = 0.5 * (abs(T_i) + abs(T_j))
-            # --- Handle string or float ---
-            if isinstance(material_conductivity, (int, float)):
-                # Constant conductivity
-                lambda_avg = float(material_conductivity) * spread
-            elif isinstance(material_conductivity, str):
-                # Material lookup
-                lambda_avg = (
-                    lambda_material_dispatch(T_avg, material_conductivity)
-                    * spread
-                )
-            else:
-                raise TypeError(
-                    f"material_conductivity must be float or str, "
-                    f"got {type(material_conductivity)}"
-                )
-            # --- Safety check ---
-            if lambda_avg <= 0:
-                print(
-                    f"❌ Zero or negative conductivity for "
-                    f"{material_conductivity} at T_avg={T_avg}"
-                )
-            G_ij = lambda_avg * A / L  # W/K
-            return G_ij
+        """Computes the thermal conductance G between node i and node j based on temperatures."""
+        dispatch = {
+            "GL": self._compute_GL,
+            "GR": self._compute_GR,
+            "GF": self._compute_GF,
+            "GU": self._compute_GU,
+        }
+        return dispatch[self.connection_type](T_i, T_j, spread)
 
-        elif self.type == 'convection':
-            A = self.params['A'] # unit m²
-            h_c = self.params['h_c'] # unit W/m²/K
-            G_ij = A * h_c # unit W/K
+    # ============================================================
+    # Private Models (Physique)
+    # ============================================================
 
-        elif self.type == 'conductance':
-            G_function_name = self.params['G_function_name']
-            T_avg = 0.5 * (abs(T_i) + abs(T_j))
-            spread_direct = 1 if spread >= 1 else 0.5
-            G_value = contact_conductance_dispatch(T_avg, G_function_name) * spread_direct
-            if G_value <= 0:
-                print(f"❌ Zero or negative contact conductance for {G_function_name} at T_avg={T_avg}")
-            G_ij = G_value * spread_direct # unit W/K
+    def _compute_GL(self, T_i, T_j, spread):
+        """Conduction model: G = lambda * S / L"""
+        S = float(self.params["S"])
+        L = float(self.params["L"])
+        material = self.params["material"]
+        T_avg = 0.5 * (abs(T_i) + abs(T_j))
 
-        elif self.type == 'radiation':
-            ei = self.params['e_i']
-            ej = self.params['e_j']
-            Si = self.params['S_i']
-            Sj = self.params['S_j']
-            F_ij = self.params['F_ij']
-            epsilon_eq = 1 / ((1 - ei)/ei + 1/F_ij + Si/Sj * (1 - ej)/ej)
-        
-            # Stabilzed G_rad computation:
-            if abs(T_i - T_j) < 1e-6:
-                G_ij = 4 * sigma * epsilon_eq * Si * F_ij * T_i**3 # Taylor order 1 when small differences
-            else:
-                G_ij = sigma * epsilon_eq * Si * F_ij * (T_i**4 - T_j**4) / (T_i - T_j) # Secante estimation for linearization (taking slope of difference between function(h) - function(a)
-                # ref : https://indico.esa.int/event/520/contributions/9876/attachments/6168/11312/Workshop_ESA_Final_Draft.pdf
+        if isinstance(material, (int, float)):
+            conductivity = float(material)
+        elif isinstance(material, str):
+            # Appel générique pour la conductivité thermique ('lambda')
+            conductivity = property_dispatch(material, "lambda", T_avg)
         else:
-            raise ValueError(f"❌ Unknown connection type: {self.type}")
+            raise TypeError(f"[Connection '{self.label}']: material must be float or material name string.")
 
-        return G_ij # unit W/K
+        conductivity *= spread
+
+        if conductivity <= 0:
+            raise ValueError(f"[Connection '{self.label}']: Computed conductivity is invalid ({conductivity} W/m/K).")
+
+        return conductivity * S / L
+
+    def _compute_GR(self, T_i, T_j, spread):
+        """Radiation model with network view factors and emissivities."""
+        F_ij = float(self.params["F_ij"]) * spread
+
+        # Récupération des émissivités et surfaces (priorité aux kwargs de la liaison, sinon attributs des nœuds si dispos)
+        e_i = self.params.get("e_i", getattr(self.node_i, "emissivity", 1.0))
+        e_j = self.params.get("e_j", getattr(self.node_j, "emissivity", 1.0))
+        S_i = self.params.get("S_i", getattr(self.node_i, "surface", 1.0))
+        S_j = self.params.get("S_j", getattr(self.node_j, "surface", 1.0))
+
+        # Facteur d'émissivité équivalent (surfaces parallèles / enceintes)
+        epsilon_eq = 1.0 / (
+            (1.0 - e_i) / e_i
+            + 1.0 / F_ij
+            + (S_i / S_j) * ((1.0 - e_j) / e_j)
+        )
+
+        # Linéarisation ou calcul direct du flux radiatif converti en conductance équivalente G_rad
+        if abs(T_i - T_j) < 1e-6:
+            return 4.0 * sigma * epsilon_eq * S_i * F_ij * (T_i ** 3)
+
+        return (
+            sigma
+            * epsilon_eq
+            * S_i
+            * F_ij
+            * (T_i ** 4 - T_j ** 4)
+            / (T_i - T_j)
+        )
+
+    def _compute_GF(self, T_i, T_j, spread):
+        """Convection model: G = A * h_c"""
+        A = float(self.params["A"])
+        h_c_input = self.params["h_c"]
+        T_avg = 0.5 * (abs(T_i) + abs(T_j))
+
+        if isinstance(h_c_input, (int, float)):
+            h_c = float(h_c_input)
+        elif isinstance(h_c_input, str):
+            # Appel générique pour le coefficient de convection ('h_c')
+            h_c = property_dispatch(h_c_input, "h_c", T_avg)
+        else:
+            raise TypeError(f"[Connection '{self.label}']: h_c must be a float or a model name string.")
+
+        return A * h_c * spread
+
+    def _compute_GU(self, T_i, T_j, spread):
+        """User-defined conductance model (fixed float or function lookup)."""
+        if "G_value" in self.params:
+            return float(self.params["G_value"]) * spread
+
+        model_name = self.params["G_function_name"]
+        T_avg = 0.5 * (abs(T_i) + abs(T_j))
+
+        # Appel générique pour une conductance utilisateur ('conductance' ou 'G')
+        G = property_dispatch(model_name, "conductance", T_avg)
+        return G * spread
