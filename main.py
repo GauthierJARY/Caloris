@@ -1,92 +1,122 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sun Oct 12 18:47:50 2025
-
 @author: G.J.
+V2 
+Created on Fri Oct 23 14:05:42 2026
+@author: jarygau
+Caloris Package - Integration Test Script
+Tests the steady-state resolution of a 3-node thermal network.
 """
-import numpy as np
-from Caloris.network import Network
-from Caloris.nodes import Node, Thermostat
+
+from Caloris.nodes import Node
 from Caloris.connections import Connection
+from Caloris.network import Network
+from Caloris.steady_solver import SteadySolver
+
+print("--- Initialisation du réseau thermal Caloris ---")
+
+# 1. Création des nœuds
+# Nœud 1 : Limite chaude (Température fixée à 350 K)
+node_hot = Node(
+    label="Electronic_passive",
+    number=1,
+    node_type="D",
+    boundary_value=350.0,
+    initial_temperature=350.0
+)
+
+# Nœud 2 : Composant interne diffusif (Génère 10 W de chaleur)
+node_component = Node(
+    label="Electronic_Component",
+    number=2,
+    node_type="D",
+    initial_temperature=300.0,
+    qdot=10.0,
+)
+
+# Nœud 3 : Limite froide (Température fixée à 200 K)
+node_cold = Node(
+    label="Cold_Sink",
+    number=3,
+    node_type="B",
+    boundary_type="T",
+    boundary_value=200.0,
+    initial_temperature=200.0
+)
+
+# 2. Création des connexions (Conduction GL)
+# Note : Le paramètre 'material' accepte soit un float brut (ex: 200.0 W/m/K), 
+# soit un nom de matériau sous forme de chaîne (ex: "aluminium_6061") pour interroger l'Excel.
+conn_1 = Connection(
+    label="Link_Hot_to_Component",
+    node_i=node_hot,
+    node_j=node_component,
+    connection_type="GL",
+    S=0.005,  # Section [m²]
+    L=0.05,   # Longueur [m]
+    material='Perso'
+)
+
+conn_2 = Connection(
+    label="Link_Component_to_Cold",
+    node_i=node_component,
+    node_j=node_cold,
+    connection_type="GL",
+    S=0.005,
+    L=0.05,
+    material='Perso'
+)
+
+# 3. Assemblage du réseau topologique
+nodes = [node_hot, node_component, node_cold]
+connections = [conn_1, conn_2]
+
+network = Network(nodes=nodes, connections=connections)
+print(f"Réseau assemblé avec succès : {network.N} nœuds, {len(network.connections)} connexions.")
+
+# 4. Configuration et exécution du solveur stationnaire
+solver = SteadySolver(network=network)
+
+print("\n--- Lancement de la résolution stationnaire ---")
+result = solver.solve(
+    tol=1e-6,
+    max_iter=100,
+    relaxation=0.5,
+    verbose=True
+)
+
+# 5. Affichage des résultats finaux
+print("\n--- RESULTATS DE TEMPERATURES ---")
+for node, temp in zip(network.nodes, result.T):
+    print(f"Nœud {node.number} ({node.label}) [Type: {node.node_type}] : {temp:.3f} K")
+
+print("\n--- FLUX THERMIQUES PAR LIAISON ---")
+for signature, flux in result.fluxes.items():
+    node_src, node_dst, c_type = signature
+    print(f"Liaison {node_src} -> {node_dst} ({c_type}) : {flux:.3f} W")
+     
+# Meme example avec l'utilisation de l'appel à Excel
+
+from Caloris.excel import load_network_from_excel,load_solver_config,write_results_to_excel
+from Caloris.steady_solver import SteadySolver
+
+excel_path = r"C:\Users\jarygau\Desktop\Caloris\Caloris.xlsx"
+
+print("--- 1. Chargement du réseau depuis Excel ---")
+network = load_network_from_excel(excel_path)
+print(f"Réseau chargé : {network.N} nœuds, {len(network.connections)} connexions.")
+
+print("--- 2. Chargement des paramètres du solveur ---")
+solver_config = load_solver_config(excel_path)
+
+print("--- 3. Exécution de la simulation stationnaire ---")
+solver = SteadySolver(network=network)
+result = solver.solve(**solver_config)
+
+print("--- 4. Exportation des résultats dans Excel ---")
+write_results_to_excel(excel_path, network, result)
+
+print("Process finished successfully.")
 
 
-# --- Paramètres du problème ---
-L = 1.0         # longueur de la barre [m]
-A = 1e-4        # section [m²]
-k = 400.0       # conductivité Cuivre [W/mK]
-Q = 100.0       # flux appliqué [W]
-N = 10          # nombre de nœuds
-T0 = 300.0      # température fixée à l'extrémité droite
-
-# --- Positions des nœuds ---
-x = np.linspace(0, L, N)
-
-# --- Solution analytique (1D steady-state conduction, flux Q à gauche, T0 à droite) ---
-T_analytical = T0 + Q / (k * A) * (x - L)
-
-# --- Création des nœuds pour le solveur OOP ---
-nodes = [Node(i, temperature=300.0) for i in range(N)]
-nodes[-1] = Thermostat(N-1, fixed_temperature=T0)  # température fixée à droite
-nodes[0].heat_input = Q  # flux appliqué à gauche
-
-# --- Connexions entre nœuds consécutifs ---
-dx = L / (N-1)
-connections = [Connection(nodes[i], nodes[i+1], 'conduction', L=dx, A=A, material_conductivity='Cu') for i in range(N-1)]
-
-# --- Création du réseau ---
-network = Network(nodes, connections)
-
-# --- Résolution ---
-T_final, fluxes, history = network.solve_steady(tol=1e-8, max_iter=500)
-
-# --- Tableau comparatif ---
-print(f"{'Node':>4} | {'Position [m]':>12} | {'T_Analytical [K]':>18} | {'T_Nodal [K]':>12}")
-print("-"*60)
-for i, node in enumerate(nodes):
-    print(f"{node.label:>4} | {x[i]:>12.3f} | {T_analytical[i]:>18.3f} | {node.temperature:>12.3f}")
-    
-import numpy as np
-
-# Paramètres physiques
-L = 1.0        # m
-N = 10         # nombre de nœuds
-A = 1e-4       # m²
-k = 400        # W/mK, cuivre
-Q_flux = 100   # W, flux à gauche
-T_right = 300  # K, température à droite
-
-dx = L / (N-1)
-
-# --- Création des nœuds et de la matrice G ---
-T = np.ones(N) * 300.0
-G = np.zeros((N,N))
-S = np.zeros(N)
-
-# Assemblage G pour conduction uniforme
-for i in range(N-1):
-    G[i,i] += k*A/dx
-    G[i,i+1] -= k*A/dx
-    G[i+1,i] -= k*A/dx
-    G[i+1,i+1] += k*A/dx
-
-# Conditions aux limites
-# Nœud 0 : flux imposé Q_flux
-S[0] = Q_flux
-
-# Nœud N-1 : température fixe T_right
-G[-1,:] = 0
-G[-1,-1] = 1.0
-S[-1] = T_right
-
-# Résolution
-T_nodal = np.linalg.solve(G, S)
-
-# Solution analytique (profil linéaire)
-x = np.linspace(0,L,N)
-T_analytical = T_right + Q_flux*(L-x)/(k*A)
-
-# Affichage tableau
-print("Node | Position [m] | T_Analytical [K] | T_Nodal [K]")
-print("-----------------------------------------------------")
-for i in range(N):
-    print(f"{i:4d} | {x[i]:12.3f} | {T_analytical[i]:16.3f} | {T_nodal[i]:12.3f}")
